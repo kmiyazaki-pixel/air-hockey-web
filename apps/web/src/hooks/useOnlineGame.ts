@@ -64,9 +64,16 @@ function lerpVec(current: Vec2, target: Vec2, amount: number): Vec2 {
   };
 }
 
+function distance(a: Vec2, b: Vec2) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
 export function useOnlineGame() {
   const socketRef = useRef<WebSocket | null>(null);
   const animationRef = useRef<number | null>(null);
+  const targetStateRef = useRef<RoomState>(EMPTY_ROOM);
+  const localDisplayMalletRef = useRef<Vec2 | null>(null);
+  const lastSentAtRef = useRef(0);
 
   const [connected, setConnected] = useState(false);
   const [roomId, setRoomId] = useState("");
@@ -76,8 +83,6 @@ export function useOnlineGame() {
   const [displayState, setDisplayState] = useState<RoomState>(EMPTY_ROOM);
   const [localDisplayMallet, setLocalDisplayMallet] = useState<Vec2 | null>(null);
   const [error, setError] = useState("");
-
-  const targetStateRef = useRef<RoomState>(EMPTY_ROOM);
 
   useEffect(() => {
     const socket = new WebSocket(getWsUrl());
@@ -92,6 +97,7 @@ export function useOnlineGame() {
       setConnected(false);
       setPlayerNumber(null);
       setLocalDisplayMallet(null);
+      localDisplayMalletRef.current = null;
     });
 
     socket.addEventListener("message", (event) => {
@@ -108,6 +114,27 @@ export function useOnlineGame() {
       if (message.type === "room_state") {
         targetStateRef.current = message.state;
         setRoomState(message.state);
+
+        if (playerNumber === 1) {
+          const serverMe = rotate180(message.state.player1);
+          if (
+            !localDisplayMalletRef.current ||
+            distance(localDisplayMalletRef.current, serverMe) > 180
+          ) {
+            localDisplayMalletRef.current = serverMe;
+            setLocalDisplayMallet(serverMe);
+          }
+        } else if (playerNumber === 2) {
+          const serverMe = message.state.player2;
+          if (
+            !localDisplayMalletRef.current ||
+            distance(localDisplayMalletRef.current, serverMe) > 180
+          ) {
+            localDisplayMalletRef.current = serverMe;
+            setLocalDisplayMallet(serverMe);
+          }
+        }
+
         return;
       }
 
@@ -120,7 +147,7 @@ export function useOnlineGame() {
       socket.close();
       socketRef.current = null;
     };
-  }, []);
+  }, [playerNumber]);
 
   useEffect(() => {
     const tick = () => {
@@ -128,10 +155,30 @@ export function useOnlineGame() {
 
       setDisplayState((current) => ({
         ...target,
-        puck: lerpVec(current.puck, target.puck, 0.42),
-        player1: lerpVec(current.player1, target.player1, 0.28),
-        player2: lerpVec(current.player2, target.player2, 0.28),
+        puck: lerpVec(current.puck, target.puck, 0.5),
+        player1: lerpVec(current.player1, target.player1, 0.22),
+        player2: lerpVec(current.player2, target.player2, 0.22),
       }));
+
+      setLocalDisplayMallet((current) => {
+        if (!current || !playerNumber) return current;
+
+        const serverMe =
+          playerNumber === 1
+            ? rotate180(target.player1)
+            : target.player2;
+
+        const gap = distance(current, serverMe);
+
+        if (gap < 18) {
+          localDisplayMalletRef.current = current;
+          return current;
+        }
+
+        const next = lerpVec(current, serverMe, 0.08);
+        localDisplayMalletRef.current = next;
+        return next;
+      });
 
       animationRef.current = window.requestAnimationFrame(tick);
     };
@@ -143,18 +190,7 @@ export function useOnlineGame() {
         window.cancelAnimationFrame(animationRef.current);
       }
     };
-  }, []);
-
-  useEffect(() => {
-    if (!playerNumber) return;
-
-    if (playerNumber === 1) {
-      setLocalDisplayMallet(rotate180(roomState.player1));
-      return;
-    }
-
-    setLocalDisplayMallet(roomState.player2);
-  }, [playerNumber, roomState.player1, roomState.player2]);
+  }, [playerNumber]);
 
   const send = (payload: unknown) => {
     const socket = socketRef.current;
@@ -183,12 +219,18 @@ export function useOnlineGame() {
   const sendMove = (displayX: number, displayY: number) => {
     if (!playerNumber) return;
 
-    setLocalDisplayMallet({ x: displayX, y: displayY });
+    const local = { x: displayX, y: displayY };
+    setLocalDisplayMallet(local);
+    localDisplayMalletRef.current = local;
 
     const world =
       playerNumber === 1
-        ? rotate180({ x: displayX, y: displayY })
-        : { x: displayX, y: displayY };
+        ? rotate180(local)
+        : local;
+
+    const now = performance.now();
+    if (now - lastSentAtRef.current < 12) return;
+    lastSentAtRef.current = now;
 
     send({ type: "move", x: world.x, y: world.y });
   };
