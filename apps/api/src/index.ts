@@ -3,13 +3,14 @@ import { WebSocketServer, WebSocket } from "ws";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const STEP_RATE = 1000 / 60;
-const BROADCAST_RATE = 1000 / 20;
+const BROADCAST_RATE = 1000 / 24;
 
 const WORLD_WIDTH = 1000;
 const WORLD_HEIGHT = 1600;
 const GOAL_WIDTH = 320;
 const PUCK_RADIUS = 22;
 const MALLET_RADIUS = 58;
+const COLLISION_BONUS = 16;
 const WIN_SCORE = 5;
 const TABLE_MIN_X = 70;
 const TABLE_MAX_X = WORLD_WIDTH - 70;
@@ -274,14 +275,14 @@ function collide(
   const dx = room.puck.x - player.mallet.x;
   const dy = room.puck.y - player.mallet.y;
   const distance = Math.hypot(dx, dy);
-  const minDistance = PUCK_RADIUS + MALLET_RADIUS;
+  const minDistance = PUCK_RADIUS + MALLET_RADIUS + COLLISION_BONUS;
 
   if (distance >= minDistance) return;
 
   const nx = dx / (distance || 1);
   const ny = dy / (distance || 1);
   const speed = Math.hypot(room.puckVelocity.x, room.puckVelocity.y);
-  const nextSpeed = Math.min(12, speed + 0.55);
+  const nextSpeed = Math.min(12.5, speed + 0.8);
 
   room.puckVelocity = {
     x: nx * nextSpeed,
