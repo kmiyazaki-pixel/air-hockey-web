@@ -2,7 +2,9 @@ import Fastify from "fastify";
 import { WebSocketServer, WebSocket } from "ws";
 
 const PORT = Number(process.env.PORT ?? 4000);
-const TICK_RATE = 1000 / 60;
+const STEP_RATE = 1000 / 60;
+const BROADCAST_RATE = 1000 / 20;
+
 const WORLD_WIDTH = 1000;
 const WORLD_HEIGHT = 1600;
 const GOAL_WIDTH = 320;
@@ -21,13 +23,11 @@ type PlayerNumber = 1 | 2;
 type Winner = "PLAYER1" | "PLAYER2" | null;
 
 type ClientMessage =
-  | { type: "create_room" }
   | { type: "join_room"; roomId: string }
   | { type: "move"; x: number; y: number }
   | { type: "restart" };
 
 type ServerMessage =
-  | { type: "room_created"; roomId: string }
   | { type: "joined"; roomId: string; playerNumber: PlayerNumber }
   | { type: "room_state"; state: RoomSnapshot }
   | { type: "error"; message: string };
@@ -74,8 +74,8 @@ function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max));
 }
 
-function createRoomId() {
-  return Math.random().toString(36).slice(2, 8).toUpperCase();
+function isValidRoomId(roomId: string) {
+  return /^\d{4}$/.test(roomId);
 }
 
 function makeInitialRoom(id: string): RoomState {
@@ -161,15 +161,11 @@ function removeSocket(socket: WebSocket) {
   if (!room) return;
 
   if (entry.playerNumber === 1 && room.player1?.socket === socket) {
-    if (room.player1) {
-      room.player1.connected = false;
-    }
+    room.player1.connected = false;
   }
 
   if (entry.playerNumber === 2 && room.player2?.socket === socket) {
-    if (room.player2) {
-      room.player2.connected = false;
-    }
+    room.player2.connected = false;
   }
 
   room.status = "相手の接続待ち";
@@ -222,25 +218,18 @@ function attachPlayer(
   broadcastRoom(room);
 }
 
-function handleCreateRoom(socket: WebSocket) {
-  let roomId = createRoomId();
+function handleJoinRoom(socket: WebSocket, roomIdRaw: string) {
+  const roomId = roomIdRaw.trim();
 
-  while (rooms.has(roomId)) {
-    roomId = createRoomId();
+  if (!isValidRoomId(roomId)) {
+    send(socket, {
+      type: "error",
+      message: "4桁の数字を入力してください。",
+    });
+    return;
   }
 
   const room = ensureRoom(roomId);
-  attachPlayer(room, socket, 1);
-  send(socket, { type: "room_created", roomId });
-}
-
-function handleJoinRoom(socket: WebSocket, roomId: string) {
-  const room = rooms.get(roomId);
-
-  if (!room) {
-    send(socket, { type: "error", message: "ルームが見つかりません。" });
-    return;
-  }
 
   if (!room.player1) {
     attachPlayer(room, socket, 1);
@@ -413,13 +402,8 @@ app.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
       try {
         const message = JSON.parse(String(raw)) as ClientMessage;
 
-        if (message.type === "create_room") {
-          handleCreateRoom(socket);
-          return;
-        }
-
         if (message.type === "join_room") {
-          handleJoinRoom(socket, message.roomId.trim().toUpperCase());
+          handleJoinRoom(socket, message.roomId);
           return;
         }
 
@@ -454,9 +438,14 @@ app.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
   setInterval(() => {
     for (const room of rooms.values()) {
       stepRoom(room);
+    }
+  }, STEP_RATE);
+
+  setInterval(() => {
+    for (const room of rooms.values()) {
       broadcastRoom(room);
     }
-  }, TICK_RATE);
+  }, BROADCAST_RATE);
 
   app.log.info(`API running on ${PORT}`);
 });
