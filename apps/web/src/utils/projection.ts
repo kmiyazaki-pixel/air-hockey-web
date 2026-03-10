@@ -15,6 +15,13 @@ export const TOP_WIDTH = 260;
 export const BOTTOM_WIDTH = 640;
 export const CENTER_X = VIEW_WIDTH / 2;
 
+export const TABLE_MIN_X = 70;
+export const TABLE_MAX_X = WORLD_WIDTH - 70;
+export const PLAYER_MIN_Y = WORLD_HEIGHT * 0.5 + 40;
+export const PLAYER_MAX_Y = WORLD_HEIGHT - 40;
+export const CPU_MIN_Y = 120;
+export const CPU_MAX_Y = WORLD_HEIGHT * 0.38;
+
 export function clamp(value: number, min: number, max: number) {
   return Math.max(min, Math.min(value, max));
 }
