@@ -88,6 +88,7 @@ export function useOnlineGame() {
 
     socket.addEventListener("close", () => {
       setConnected(false);
+      setPlayerNumber(null);
     });
 
     socket.addEventListener("message", (event) => {
@@ -142,18 +143,21 @@ export function useOnlineGame() {
 
   const send = (payload: unknown) => {
     const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return false;
     socket.send(JSON.stringify(payload));
+    return true;
   };
 
   const joinRoom = () => {
     const normalized = joinInput.replace(/\D/g, "").slice(0, 4);
+
     if (normalized.length !== 4) {
       setError("4桁の数字を入力してください。");
       return;
     }
 
     setJoinInput(normalized);
+    setError("");
     send({ type: "join_room", roomId: normalized });
   };
 
