@@ -1,3 +1,5 @@
+import Mallet from "./Mallet";
+import Puck from "./Puck";
 import {
   BOTTOM_WIDTH,
   BOTTOM_Y,
@@ -9,6 +11,12 @@ import {
   VIEW_WIDTH,
 } from "../utils/projection";
 
+type ScreenObject = {
+  x: number;
+  y: number;
+  scale: number;
+};
+
 type GameBoardProps = {
   winner: "PLAYER" | "CPU" | null;
   status: string;
@@ -16,17 +24,9 @@ type GameBoardProps = {
   onMouseMove: (event: React.MouseEvent<HTMLDivElement>) => void;
   onBack: () => void;
   onRestart: () => void;
-  renderMallet: (
-    x: number,
-    y: number,
-    scale: number,
-    color: string,
-    glow: string
-  ) => React.ReactNode;
-  renderPuck: (x: number, y: number, scale: number) => React.ReactNode;
-  cpuScreen: { x: number; y: number; scale: number };
-  playerScreen: { x: number; y: number; scale: number };
-  puckScreen: { x: number; y: number; scale: number };
+  cpuScreen: ScreenObject;
+  playerScreen: ScreenObject;
+  puckScreen: ScreenObject;
 };
 
 function GameBoard({
@@ -36,8 +36,6 @@ function GameBoard({
   onMouseMove,
   onBack,
   onRestart,
-  renderMallet,
-  renderPuck,
   cpuScreen,
   playerScreen,
   puckScreen,
@@ -283,21 +281,21 @@ function GameBoard({
           />
         </div>
 
-        {renderMallet(
-          cpuScreen.x,
-          cpuScreen.y,
-          cpuScreen.scale,
-          "#ff5fd2",
-          "0 0 14px rgba(255,95,210,0.38)"
-        )}
-        {renderMallet(
-          playerScreen.x,
-          playerScreen.y,
-          playerScreen.scale,
-          "#7df9ff",
-          "0 0 14px rgba(125,249,255,0.4)"
-        )}
-        {renderPuck(puckScreen.x, puckScreen.y, puckScreen.scale)}
+        <Mallet
+          x={cpuScreen.x}
+          y={cpuScreen.y}
+          scale={cpuScreen.scale}
+          color="#ff5fd2"
+          glow="0 0 14px rgba(255,95,210,0.38)"
+        />
+        <Mallet
+          x={playerScreen.x}
+          y={playerScreen.y}
+          scale={playerScreen.scale}
+          color="#7df9ff"
+          glow="0 0 14px rgba(125,249,255,0.4)"
+        />
+        <Puck x={puckScreen.x} y={puckScreen.y} scale={puckScreen.scale} />
       </div>
 
       <div
