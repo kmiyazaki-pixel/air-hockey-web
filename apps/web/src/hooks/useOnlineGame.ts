@@ -73,6 +73,8 @@ export function useOnlineGame() {
   const [joinInput, setJoinInput] = useState("1234");
   const [playerNumber, setPlayerNumber] = useState<PlayerNumber | null>(null);
   const [roomState, setRoomState] = useState<RoomState>(EMPTY_ROOM);
+  const [displayState, setDisplayState] = useState<RoomState>(EMPTY_ROOM);
+  const [localDisplayMallet, setLocalDisplayMallet] = useState<Vec2 | null>(null);
   const [error, setError] = useState("");
 
   const targetStateRef = useRef<RoomState>(EMPTY_ROOM);
@@ -89,6 +91,7 @@ export function useOnlineGame() {
     socket.addEventListener("close", () => {
       setConnected(false);
       setPlayerNumber(null);
+      setLocalDisplayMallet(null);
     });
 
     socket.addEventListener("message", (event) => {
@@ -104,6 +107,7 @@ export function useOnlineGame() {
 
       if (message.type === "room_state") {
         targetStateRef.current = message.state;
+        setRoomState(message.state);
         return;
       }
 
@@ -122,11 +126,11 @@ export function useOnlineGame() {
     const tick = () => {
       const target = targetStateRef.current;
 
-      setRoomState((current) => ({
+      setDisplayState((current) => ({
         ...target,
-        puck: lerpVec(current.puck, target.puck, 0.35),
-        player1: lerpVec(current.player1, target.player1, 0.42),
-        player2: lerpVec(current.player2, target.player2, 0.42),
+        puck: lerpVec(current.puck, target.puck, 0.42),
+        player1: lerpVec(current.player1, target.player1, 0.28),
+        player2: lerpVec(current.player2, target.player2, 0.28),
       }));
 
       animationRef.current = window.requestAnimationFrame(tick);
@@ -140,6 +144,17 @@ export function useOnlineGame() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (!playerNumber) return;
+
+    if (playerNumber === 1) {
+      setLocalDisplayMallet(rotate180(roomState.player1));
+      return;
+    }
+
+    setLocalDisplayMallet(roomState.player2);
+  }, [playerNumber, roomState.player1, roomState.player2]);
 
   const send = (payload: unknown) => {
     const socket = socketRef.current;
@@ -168,6 +183,8 @@ export function useOnlineGame() {
   const sendMove = (displayX: number, displayY: number) => {
     if (!playerNumber) return;
 
+    setLocalDisplayMallet({ x: displayX, y: displayY });
+
     const world =
       playerNumber === 1
         ? rotate180({ x: displayX, y: displayY })
@@ -179,9 +196,9 @@ export function useOnlineGame() {
   const viewState = useMemo(() => {
     if (playerNumber === 1) {
       return {
-        me: rotate180(roomState.player1),
-        opponent: rotate180(roomState.player2),
-        puck: rotate180(roomState.puck),
+        me: localDisplayMallet ?? rotate180(displayState.player1),
+        opponent: rotate180(displayState.player2),
+        puck: rotate180(displayState.puck),
         myScore: roomState.player1Score,
         opponentScore: roomState.player2Score,
         opponentConnected: roomState.player2Connected,
@@ -195,9 +212,9 @@ export function useOnlineGame() {
     }
 
     return {
-      me: roomState.player2,
-      opponent: roomState.player1,
-      puck: roomState.puck,
+      me: localDisplayMallet ?? displayState.player2,
+      opponent: displayState.player1,
+      puck: displayState.puck,
       myScore: roomState.player2Score,
       opponentScore: roomState.player1Score,
       opponentConnected: roomState.player1Connected,
@@ -208,7 +225,7 @@ export function useOnlineGame() {
             ? "CPU"
             : null,
     } as const;
-  }, [playerNumber, roomState]);
+  }, [playerNumber, localDisplayMallet, displayState, roomState]);
 
   return {
     connected,
