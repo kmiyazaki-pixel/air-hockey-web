@@ -195,8 +195,7 @@ function attachPlayer(
   const slot: PlayerSlot = {
     socket,
     connected: true,
-    mallet:
-      playerNumber === 1 ? { x: 500, y: 210 } : { x: 500, y: 1350 },
+    mallet: playerNumber === 1 ? { x: 500, y: 210 } : { x: 500, y: 1350 },
   };
 
   if (playerNumber === 1) {
@@ -208,7 +207,7 @@ function attachPlayer(
   socketToRoom.set(socket, { roomId: room.id, playerNumber });
   send(socket, { type: "joined", roomId: room.id, playerNumber });
 
-  if (room.player1 && room.player2) {
+  if (room.player1?.connected && room.player2?.connected) {
     resetMatch(room);
   } else {
     room.status = "相手の参加待ち";
@@ -231,12 +230,12 @@ function handleJoinRoom(socket: WebSocket, roomIdRaw: string) {
 
   const room = ensureRoom(roomId);
 
-  if (!room.player1) {
+  if (!room.player1 || !room.player1.connected) {
     attachPlayer(room, socket, 1);
     return;
   }
 
-  if (!room.player2) {
+  if (!room.player2 || !room.player2.connected) {
     attachPlayer(room, socket, 2);
     return;
   }
@@ -333,7 +332,6 @@ function stepRoom(room: RoomState) {
       room.status = "PLAYER2ゴール";
       resetRound(room, 1);
     }
-
     return;
   }
 
@@ -347,7 +345,6 @@ function stepRoom(room: RoomState) {
       room.status = "PLAYER1ゴール";
       resetRound(room, 2);
     }
-
     return;
   }
 
