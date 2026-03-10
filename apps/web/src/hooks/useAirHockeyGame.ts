@@ -1,323 +1,192 @@
-import { useEffect, useRef, useState } from "react";
-import {
-  clamp,
-  CPU_MAX_Y,
-  CPU_MIN_Y,
-  PLAYER_MAX_Y,
-  PLAYER_MIN_Y,
-  TABLE_MAX_X,
-  TABLE_MIN_X,
-  WORLD_HEIGHT,
-  WORLD_WIDTH,
-} from "../utils/projection";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { WORLD_HEIGHT, WORLD_WIDTH } from "../utils/projection";
 
-const GOAL_WIDTH = 320;
-const PUCK_RADIUS = 22;
-const MALLET_RADIUS = 58;
-const WIN_SCORE = 5;
+export type OnlineWinner = "PLAYER1" | "PLAYER2" | null;
 
-export type Winner = "PLAYER" | "CPU" | null;
-export type Vec2 = { x: number; y: number };
+type Vec2 = { x: number; y: number };
+type PlayerNumber = 1 | 2;
 
-export function useAirHockeyGame() {
-  const [started, setStarted] = useState(false);
+type RoomState = {
+  roomId: string;
+  status: string;
+  winner: OnlineWinner;
+  player1Score: number;
+  player2Score: number;
+  puck: Vec2;
+  player1: Vec2;
+  player2: Vec2;
+  player1Connected: boolean;
+  player2Connected: boolean;
+};
 
-  const [playerScore, setPlayerScore] = useState(0);
-  const [cpuScore, setCpuScore] = useState(0);
-  const [status, setStatus] = useState("準備完了");
-  const [winner, setWinner] = useState<Winner>(null);
+type ServerMessage =
+  | { type: "room_created"; roomId: string }
+  | { type: "joined"; roomId: string; playerNumber: PlayerNumber }
+  | { type: "room_state"; state: RoomState }
+  | { type: "error"; message: string };
 
-  const [puck, setPuck] = useState<Vec2>({ x: 500, y: 900 });
-  const [player, setPlayer] = useState<Vec2>({ x: 500, y: 1350 });
-  const [cpu, setCpu] = useState<Vec2>({ x: 500, y: 210 });
+const EMPTY_ROOM: RoomState = {
+  roomId: "",
+  status: "未接続",
+  winner: null,
+  player1Score: 0,
+  player2Score: 0,
+  puck: { x: 500, y: 900 },
+  player1: { x: 500, y: 210 },
+  player2: { x: 500, y: 1350 },
+  player1Connected: false,
+  player2Connected: false,
+};
 
-  const playerRef = useRef(player);
-  const cpuRef = useRef(cpu);
-  const puckRef = useRef(puck);
+function getWsUrl() {
+  const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
+  if (envUrl) return envUrl;
 
-  const playerVelocityRef = useRef<Vec2>({ x: 0, y: 0 });
-  const lastPlayerRef = useRef(player);
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = window.location.hostname;
+  return `${protocol}//${host}:4000/ws`;
+}
+
+function rotate180(vec: Vec2): Vec2 {
+  return {
+    x: WORLD_WIDTH - vec.x,
+    y: WORLD_HEIGHT - vec.y,
+  };
+}
+
+export function useOnlineGame() {
+  const socketRef = useRef<WebSocket | null>(null);
+
+  const [connected, setConnected] = useState(false);
+  const [roomId, setRoomId] = useState("");
+  const [joinInput, setJoinInput] = useState("");
+  const [playerNumber, setPlayerNumber] = useState<PlayerNumber | null>(null);
+  const [roomState, setRoomState] = useState<RoomState>(EMPTY_ROOM);
+  const [error, setError] = useState("");
 
   useEffect(() => {
-    playerRef.current = player;
-  }, [player]);
+    const socket = new WebSocket(getWsUrl());
+    socketRef.current = socket;
 
-  useEffect(() => {
-    cpuRef.current = cpu;
-  }, [cpu]);
+    socket.addEventListener("open", () => {
+      setConnected(true);
+      setError("");
+    });
 
-  useEffect(() => {
-    puckRef.current = puck;
-  }, [puck]);
+    socket.addEventListener("close", () => {
+      setConnected(false);
+    });
 
-  const startGame = () => {
-    const nextPlayer = { x: 500, y: 1350 };
-    const nextCpu = { x: 500, y: 210 };
-    const nextPuck = { x: 500, y: 900 };
+    socket.addEventListener("message", (event) => {
+      const message = JSON.parse(event.data) as ServerMessage;
 
-    setPlayerScore(0);
-    setCpuScore(0);
-    setWinner(null);
-    setStatus("プレイ中");
+      if (message.type === "room_created") {
+        setRoomId(message.roomId);
+        setJoinInput(message.roomId);
+        return;
+      }
 
-    setPlayer(nextPlayer);
-    setCpu(nextCpu);
-    setPuck(nextPuck);
+      if (message.type === "joined") {
+        setRoomId(message.roomId);
+        setJoinInput(message.roomId);
+        setPlayerNumber(message.playerNumber);
+        setError("");
+        return;
+      }
 
-    playerRef.current = nextPlayer;
-    cpuRef.current = nextCpu;
-    puckRef.current = nextPuck;
-    playerVelocityRef.current = { x: 0, y: 0 };
-    lastPlayerRef.current = nextPlayer;
+      if (message.type === "room_state") {
+        setRoomState(message.state);
+        return;
+      }
 
-    setStarted(true);
+      if (message.type === "error") {
+        setError(message.message);
+      }
+    });
+
+    return () => {
+      socket.close();
+      socketRef.current = null;
+    };
+  }, []);
+
+  const send = (payload: unknown) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(JSON.stringify(payload));
   };
 
-  const backToTitle = () => {
-    setStarted(false);
+  const createRoom = () => {
+    send({ type: "create_room" });
   };
 
-  const updatePlayerFromWorld = (worldX: number, worldY: number) => {
-    if (!started || winner) return;
-
-    const nextPlayer = {
-      x: clamp(worldX, TABLE_MIN_X, TABLE_MAX_X),
-      y: clamp(worldY, PLAYER_MIN_Y, PLAYER_MAX_Y),
-    };
-
-    const prevPlayer = lastPlayerRef.current;
-    playerVelocityRef.current = {
-      x: nextPlayer.x - prevPlayer.x,
-      y: nextPlayer.y - prevPlayer.y,
-    };
-    lastPlayerRef.current = nextPlayer;
-
-    playerRef.current = nextPlayer;
-    setPlayer(nextPlayer);
+  const joinRoom = () => {
+    const normalized = joinInput.trim().toUpperCase();
+    if (!normalized) return;
+    send({ type: "join_room", roomId: normalized });
   };
 
-  useEffect(() => {
-    if (!started || winner) return;
+  const restart = () => {
+    send({ type: "restart" });
+  };
 
-    let puckX = puckRef.current.x;
-    let puckY = puckRef.current.y;
-    let velX = 3.8;
-    let velY = 5.4;
+  const sendMove = (displayX: number, displayY: number) => {
+    if (!playerNumber) return;
 
-    let cpuX = cpuRef.current.x;
-    let cpuY = cpuRef.current.y;
+    const world =
+      playerNumber === 1
+        ? rotate180({ x: displayX, y: displayY })
+        : { x: displayX, y: displayY };
 
-    const resetPuck = (toward: "player" | "cpu") => {
-      puckX = 500;
-      puckY = 900;
-      velX = toward === "player" ? 2.4 : -2.4;
-      velY = toward === "player" ? 4.6 : -4.6;
-      const nextPuck = { x: puckX, y: puckY };
-      puckRef.current = nextPuck;
-      setPuck(nextPuck);
-    };
+    send({ type: "move", x: world.x, y: world.y });
+  };
 
-    const timer = window.setInterval(() => {
-      const currentPlayer = playerRef.current;
-      const playerVelocity = playerVelocityRef.current;
+  const viewState = useMemo(() => {
+    if (playerNumber === 1) {
+      return {
+        me: rotate180(roomState.player1),
+        opponent: rotate180(roomState.player2),
+        puck: rotate180(roomState.puck),
+        myScore: roomState.player1Score,
+        opponentScore: roomState.player2Score,
+        opponentConnected: roomState.player2Connected,
+        winner:
+          roomState.winner === "PLAYER1"
+            ? "PLAYER"
+            : roomState.winner === "PLAYER2"
+              ? "CPU"
+              : null,
+      } as const;
+    }
 
-      puckX += velX;
-      puckY += velY;
-
-      if (puckX <= PUCK_RADIUS) {
-        puckX = PUCK_RADIUS;
-        velX = Math.abs(velX);
-      }
-
-      if (puckX >= WORLD_WIDTH - PUCK_RADIUS) {
-        puckX = WORLD_WIDTH - PUCK_RADIUS;
-        velX = -Math.abs(velX);
-      }
-
-      const topGoal =
-        puckY <= PUCK_RADIUS &&
-        Math.abs(puckX - WORLD_WIDTH / 2) <= GOAL_WIDTH / 2;
-
-      const bottomGoal =
-        puckY >= WORLD_HEIGHT - PUCK_RADIUS &&
-        Math.abs(puckX - WORLD_WIDTH / 2) <= GOAL_WIDTH / 2;
-
-      if (topGoal) {
-        setPlayerScore((prev) => {
-          const next = prev + 1;
-          if (next >= WIN_SCORE) {
-            setWinner("PLAYER");
-            setStatus("プレイヤー勝利");
-          } else {
-            setStatus("プレイヤーゴール");
-            resetPuck("player");
-          }
-          return next;
-        });
-      } else if (bottomGoal) {
-        setCpuScore((prev) => {
-          const next = prev + 1;
-          if (next >= WIN_SCORE) {
-            setWinner("CPU");
-            setStatus("CPU勝利");
-          } else {
-            setStatus("CPUゴール");
-            resetPuck("cpu");
-          }
-          return next;
-        });
-      } else {
-        if (puckY <= PUCK_RADIUS) {
-          puckY = PUCK_RADIUS;
-          velY = Math.abs(velY);
-        }
-
-        if (puckY >= WORLD_HEIGHT - PUCK_RADIUS) {
-          puckY = WORLD_HEIGHT - PUCK_RADIUS;
-          velY = -Math.abs(velY);
-        }
-      }
-
-      const puckInTopLeftCorner = puckX < 150 && puckY < 220;
-      const puckInTopRightCorner = puckX > WORLD_WIDTH - 150 && puckY < 220;
-      const puckInTopCorner = puckInTopLeftCorner || puckInTopRightCorner;
-
-      const puckNearLeftWall = puckX < 135;
-      const puckNearRightWall = puckX > WORLD_WIDTH - 135;
-      const puckNearTopWall = puckY < 180;
-
-      let cpuTargetX = puckX;
-      let cpuTargetY = puckY - 220;
-
-      if (puckInTopLeftCorner || puckInTopRightCorner) {
-        cpuTargetX = 680;
-        cpuTargetY = 220;
-      } else {
-        if (puckNearLeftWall) cpuTargetX += 150;
-        if (puckNearRightWall) cpuTargetX -= 150;
-        if (puckNearTopWall) cpuTargetY += 140;
-      }
-
-      cpuTargetX = clamp(cpuTargetX, TABLE_MIN_X, TABLE_MAX_X);
-      cpuTargetY = clamp(cpuTargetY, CPU_MIN_Y, CPU_MAX_Y);
-
-      const cpuLerp = puckInTopCorner ? 0.045 : 0.06;
-      cpuX += (cpuTargetX - cpuX) * cpuLerp;
-      cpuY += (cpuTargetY - cpuY) * cpuLerp;
-
-      const collidePlayer = () => {
-        const dx = puckX - currentPlayer.x;
-        const dy = puckY - currentPlayer.y;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        const minDistance = PUCK_RADIUS + MALLET_RADIUS;
-
-        if (distance < minDistance) {
-          const nx = dx / (distance || 1);
-          const ny = dy / (distance || 1);
-
-          const currentSpeed = Math.sqrt(velX * velX + velY * velY);
-          const swingSpeed = Math.sqrt(
-            playerVelocity.x * playerVelocity.x +
-              playerVelocity.y * playerVelocity.y
-          );
-
-          const smashBoost = Math.min(4.5, swingSpeed * 0.9);
-          const nextSpeed = Math.min(13, currentSpeed + 0.4 + smashBoost);
-
-          const hitX = nx * nextSpeed + playerVelocity.x * 0.35;
-          const hitY = ny * nextSpeed + playerVelocity.y * 0.35;
-
-          velX = hitX;
-          velY = hitY;
-
-          puckX = currentPlayer.x + nx * (minDistance + 2);
-          puckY = currentPlayer.y + ny * (minDistance + 2);
-
-          if (smashBoost > 1.8) {
-            setStatus("スマッシュ");
-          } else {
-            setStatus("プレイヤーヒット");
-          }
-        }
-      };
-
-      const collideCpu = () => {
-        const dx = puckX - cpuX;
-        const dy = puckY - cpuY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-
-        const puckInTopLeftCornerNow = puckX < 150 && puckY < 220;
-        const puckInTopRightCornerNow = puckX > WORLD_WIDTH - 150 && puckY < 220;
-        const puckInTopCornerNow = puckInTopLeftCornerNow || puckInTopRightCornerNow;
-
-        const cpuHitRadius = puckInTopCornerNow
-          ? PUCK_RADIUS + MALLET_RADIUS - 12
-          : PUCK_RADIUS + MALLET_RADIUS - 4;
-
-        if (distance < cpuHitRadius) {
-          if (puckInTopCornerNow) {
-            const escapeX = puckInTopLeftCornerNow ? 2.8 : -2.8;
-            const escapeY = 6.8;
-
-            velX = escapeX;
-            velY = escapeY;
-
-            puckX += escapeX * 2.2;
-            puckY += 18;
-
-            setStatus("CPUヒット");
-            return;
-          }
-
-          const nx = dx / (distance || 1);
-          const ny = dy / (distance || 1);
-          const speed = Math.min(
-            7.2,
-            Math.sqrt(velX * velX + velY * velY) + 0.12
-          );
-
-          velX = nx * speed;
-          velY = ny * speed;
-
-          puckX = cpuX + nx * (cpuHitRadius + 10);
-          puckY = cpuY + ny * (cpuHitRadius + 10);
-
-          setStatus("CPUヒット");
-        }
-      };
-
-      collidePlayer();
-      collideCpu();
-
-      if (puckY < 135 && (puckX < 120 || puckX > WORLD_WIDTH - 120)) {
-        velY = Math.max(velY, 5.8);
-      }
-
-      const nextPuck = { x: puckX, y: puckY };
-      const nextCpu = { x: cpuX, y: cpuY };
-
-      puckRef.current = nextPuck;
-      cpuRef.current = nextCpu;
-
-      setPuck(nextPuck);
-      setCpu(nextCpu);
-    }, 16);
-
-    return () => window.clearInterval(timer);
-  }, [started, winner]);
+    return {
+      me: roomState.player2,
+      opponent: roomState.player1,
+      puck: roomState.puck,
+      myScore: roomState.player2Score,
+      opponentScore: roomState.player1Score,
+      opponentConnected: roomState.player1Connected,
+      winner:
+        roomState.winner === "PLAYER2"
+          ? "PLAYER"
+          : roomState.winner === "PLAYER1"
+            ? "CPU"
+            : null,
+    } as const;
+  }, [playerNumber, roomState]);
 
   return {
-    started,
-    playerScore,
-    cpuScore,
-    status,
-    winner,
-    puck,
-    player,
-    cpu,
-    startGame,
-    backToTitle,
-    updatePlayerFromWorld,
-    winScore: WIN_SCORE,
+    connected,
+    roomId,
+    joinInput,
+    setJoinInput,
+    playerNumber,
+    roomState,
+    error,
+    createRoom,
+    joinRoom,
+    restart,
+    sendMove,
+    viewState,
   };
 }
