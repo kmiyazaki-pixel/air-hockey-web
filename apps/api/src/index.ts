@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const STEP_RATE = 1000 / 60;
-const BROADCAST_RATE = 1000 / 24;
+const BROADCAST_RATE = 1000 / 30;
 
 const WORLD_WIDTH = 1000;
 const WORLD_HEIGHT = 1600;
@@ -302,65 +302,70 @@ function stepRoom(room: RoomState) {
   if (!room.player1.connected || !room.player2.connected) return;
   if (room.winner) return;
 
-  room.puck.x += room.puckVelocity.x;
-  room.puck.y += room.puckVelocity.y;
+  const stepX = room.puckVelocity.x / PHYSICS_SUBSTEPS;
+  const stepY = room.puckVelocity.y / PHYSICS_SUBSTEPS;
 
-  if (room.puck.x <= PUCK_RADIUS) {
-    room.puck.x = PUCK_RADIUS;
-    room.puckVelocity.x = Math.abs(room.puckVelocity.x);
-  }
+  for (let i = 0; i < PHYSICS_SUBSTEPS; i++) {
+    room.puck.x += stepX;
+    room.puck.y += stepY;
 
-  if (room.puck.x >= WORLD_WIDTH - PUCK_RADIUS) {
-    room.puck.x = WORLD_WIDTH - PUCK_RADIUS;
-    room.puckVelocity.x = -Math.abs(room.puckVelocity.x);
-  }
-
-  const topGoal =
-    room.puck.y <= PUCK_RADIUS &&
-    Math.abs(room.puck.x - WORLD_WIDTH / 2) <= GOAL_WIDTH / 2;
-
-  const bottomGoal =
-    room.puck.y >= WORLD_HEIGHT - PUCK_RADIUS &&
-    Math.abs(room.puck.x - WORLD_WIDTH / 2) <= GOAL_WIDTH / 2;
-
-  if (topGoal) {
-    room.player2Score += 1;
-
-    if (room.player2Score >= WIN_SCORE) {
-      room.winner = "PLAYER2";
-      room.status = "PLAYER2勝利";
-    } else {
-      room.status = "PLAYER2ゴール";
-      resetRound(room, 1);
+    if (room.puck.x <= PUCK_RADIUS) {
+      room.puck.x = PUCK_RADIUS;
+      room.puckVelocity.x = Math.abs(room.puckVelocity.x);
     }
-    return;
-  }
 
-  if (bottomGoal) {
-    room.player1Score += 1;
-
-    if (room.player1Score >= WIN_SCORE) {
-      room.winner = "PLAYER1";
-      room.status = "PLAYER1勝利";
-    } else {
-      room.status = "PLAYER1ゴール";
-      resetRound(room, 2);
+    if (room.puck.x >= WORLD_WIDTH - PUCK_RADIUS) {
+      room.puck.x = WORLD_WIDTH - PUCK_RADIUS;
+      room.puckVelocity.x = -Math.abs(room.puckVelocity.x);
     }
-    return;
-  }
 
-  if (room.puck.y <= PUCK_RADIUS) {
-    room.puck.y = PUCK_RADIUS;
-    room.puckVelocity.y = Math.abs(room.puckVelocity.y);
-  }
+    const topGoal =
+      room.puck.y <= PUCK_RADIUS &&
+      Math.abs(room.puck.x - WORLD_WIDTH / 2) <= GOAL_WIDTH / 2;
 
-  if (room.puck.y >= WORLD_HEIGHT - PUCK_RADIUS) {
-    room.puck.y = WORLD_HEIGHT - PUCK_RADIUS;
-    room.puckVelocity.y = -Math.abs(room.puckVelocity.y);
-  }
+    const bottomGoal =
+      room.puck.y >= WORLD_HEIGHT - PUCK_RADIUS &&
+      Math.abs(room.puck.x - WORLD_WIDTH / 2) <= GOAL_WIDTH / 2;
 
-  collide(room, room.player1, "PLAYER1");
-  collide(room, room.player2, "PLAYER2");
+    if (topGoal) {
+      room.player2Score += 1;
+
+      if (room.player2Score >= WIN_SCORE) {
+        room.winner = "PLAYER2";
+        room.status = "PLAYER2勝利";
+      } else {
+        room.status = "PLAYER2ゴール";
+        resetRound(room, 1);
+      }
+      return;
+    }
+
+    if (bottomGoal) {
+      room.player1Score += 1;
+
+      if (room.player1Score >= WIN_SCORE) {
+        room.winner = "PLAYER1";
+        room.status = "PLAYER1勝利";
+      } else {
+        room.status = "PLAYER1ゴール";
+        resetRound(room, 2);
+      }
+      return;
+    }
+
+    if (room.puck.y <= PUCK_RADIUS) {
+      room.puck.y = PUCK_RADIUS;
+      room.puckVelocity.y = Math.abs(room.puckVelocity.y);
+    }
+
+    if (room.puck.y >= WORLD_HEIGHT - PUCK_RADIUS) {
+      room.puck.y = WORLD_HEIGHT - PUCK_RADIUS;
+      room.puckVelocity.y = -Math.abs(room.puckVelocity.y);
+    }
+
+    collide(room, room.player1, "PLAYER1");
+    collide(room, room.player2, "PLAYER2");
+  }
 
   room.puckVelocity.x *= 0.998;
   room.puckVelocity.y *= 0.998;
