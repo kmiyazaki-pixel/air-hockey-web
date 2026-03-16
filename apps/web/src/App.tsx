@@ -90,11 +90,13 @@ function App() {
       }
 
       try {
-        const items = await submitCpuRanking(
-          cpuGame.difficulty,
-          inputName,
-          cpuGame.clearTimeMs
-        );
+        if (cpuGame.clearTimeMs === null) return;
+
+const items = await submitCpuRanking(
+  cpuGame.difficulty,
+  inputName,
+  cpuGame.clearTimeMs
+);
 
         setRankingStore((prev) => ({
           ...prev,
