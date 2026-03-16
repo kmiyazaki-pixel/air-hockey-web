@@ -70,55 +70,55 @@ function App() {
   }, [difficulty]);
 
   useEffect(() => {
-    if (mode !== "cpu") return;
-    if (cpuGame.winner !== "PLAYER") return;
-    if (cpuGame.clearTimeMs == null) return;
-    if (rankingSubmitted) return;
+  if (mode !== "cpu") return;
+  if (cpuGame.winner !== "PLAYER") return;
+  if (cpuGame.clearTimeMs == null) return;
+  if (rankingSubmitted) return;
 
-    const run = async () => {
-      const defaultName = "NO NAME";
-      const inputName = window.prompt(
-        `クリアタイム: ${formatTimeMs(
-          cpuGame.clearTimeMs
-        )}\nランキングに登録する名前を入力してください`,
-        defaultName
+  const clearTimeMs = cpuGame.clearTimeMs;
+
+  const run = async () => {
+    const defaultName = "NO NAME";
+    const inputName = window.prompt(
+      `クリアタイム: ${formatTimeMs(
+        clearTimeMs
+      )}\nランキングに登録する名前を入力してください`,
+      defaultName
+    );
+
+    if (inputName === null) {
+      setRankingSubmitted(true);
+      return;
+    }
+
+    try {
+      const items = await submitCpuRanking(
+        cpuGame.difficulty,
+        inputName,
+        clearTimeMs
       );
 
-      if (inputName === null) {
-        setRankingSubmitted(true);
-        return;
-      }
+      setRankingStore((prev) => ({
+        ...prev,
+        [cpuGame.difficulty]: items,
+      }));
+    } catch (error) {
+      console.error(error);
+      window.alert("ランキング送信に失敗しました。");
+    } finally {
+      setRankingSubmitted(true);
+    }
+  };
 
-      try {
-        if (cpuGame.clearTimeMs === null) return;
-
-const items = await submitCpuRanking(
+  run();
+}, [
+  mode,
+  cpuGame.winner,
+  cpuGame.clearTimeMs,
   cpuGame.difficulty,
-  inputName,
-  cpuGame.clearTimeMs
-);
-
-        setRankingStore((prev) => ({
-          ...prev,
-          [cpuGame.difficulty]: items,
-        }));
-      } catch (error) {
-        console.error(error);
-        window.alert("ランキング送信に失敗しました。");
-      } finally {
-        setRankingSubmitted(true);
-      }
-    };
-
-    run();
-  }, [
-    mode,
-    cpuGame.winner,
-    cpuGame.clearTimeMs,
-    cpuGame.difficulty,
-    rankingSubmitted,
-  ]);
-
+  rankingSubmitted,
+]);
+  
   const flushOnlineMove = () => {
     onlineMoveRafRef.current = null;
     const move = pendingOnlineMoveRef.current;
