@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const STEP_RATE = 1000 / 60;
-const BROADCAST_RATE = 1000 / 40;
+const BROADCAST_RATE = 1000 / 30;
 
 const WORLD_WIDTH = 1000;
 const WORLD_HEIGHT = 1600;
@@ -18,6 +18,10 @@ const PLAYER1_MIN_Y = 120;
 const PLAYER1_MAX_Y = WORLD_HEIGHT * 0.38;
 const PLAYER2_MIN_Y = WORLD_HEIGHT * 0.5 + 40;
 const PLAYER2_MAX_Y = WORLD_HEIGHT - 40;
+
+// 高速移動時のすり抜け対策
+const PHYSICS_SUBSTEPS = 6;
+const MAX_MALLET_STEP = 90;
 
 type Vec2 = { x: number; y: number };
 type PlayerNumber = 1 | 2;
@@ -244,6 +248,20 @@ function handleJoinRoom(socket: WebSocket, roomIdRaw: string) {
   send(socket, { type: "error", message: "そのルームは満員です。" });
 }
 
+function clampMove(prev: Vec2, next: Vec2, maxStep: number): Vec2 {
+  const dx = next.x - prev.x;
+  const dy = next.y - prev.y;
+  const dist = Math.hypot(dx, dy);
+
+  if (dist <= maxStep || dist === 0) return next;
+
+  const ratio = maxStep / dist;
+  return {
+    x: prev.x + dx * ratio,
+    y: prev.y + dy * ratio,
+  };
+}
+
 function handleMove(socket: WebSocket, x: number, y: number) {
   const entry = socketToRoom.get(socket);
   if (!entry) return;
@@ -254,17 +272,18 @@ function handleMove(socket: WebSocket, x: number, y: number) {
   const slot = entry.playerNumber === 1 ? room.player1 : room.player2;
   if (!slot) return;
 
-  if (entry.playerNumber === 1) {
-    slot.mallet = {
-      x: clamp(x, TABLE_MIN_X, TABLE_MAX_X),
-      y: clamp(y, PLAYER1_MIN_Y, PLAYER1_MAX_Y),
-    };
-  } else {
-    slot.mallet = {
-      x: clamp(x, TABLE_MIN_X, TABLE_MAX_X),
-      y: clamp(y, PLAYER2_MIN_Y, PLAYER2_MAX_Y),
-    };
-  }
+  const clamped =
+    entry.playerNumber === 1
+      ? {
+          x: clamp(x, TABLE_MIN_X, TABLE_MAX_X),
+          y: clamp(y, PLAYER1_MIN_Y, PLAYER1_MAX_Y),
+        }
+      : {
+          x: clamp(x, TABLE_MIN_X, TABLE_MAX_X),
+          y: clamp(y, PLAYER2_MIN_Y, PLAYER2_MAX_Y),
+        };
+
+  slot.mallet = clampMove(slot.mallet, clamped, MAX_MALLET_STEP);
 }
 
 function collide(
@@ -274,13 +293,13 @@ function collide(
 ) {
   const dx = room.puck.x - player.mallet.x;
   const dy = room.puck.y - player.mallet.y;
-  const distance = Math.hypot(dx, dy);
+  const dist = Math.hypot(dx, dy);
   const minDistance = PUCK_RADIUS + MALLET_RADIUS + COLLISION_BONUS;
 
-  if (distance >= minDistance) return;
+  if (dist >= minDistance) return;
 
-  const nx = dx / (distance || 1);
-  const ny = dy / (distance || 1);
+  const nx = dx / (dist || 1);
+  const ny = dy / (dist || 1);
   const speed = Math.hypot(room.puckVelocity.x, room.puckVelocity.y);
   const nextSpeed = Math.min(12.5, speed + 0.8);
 
@@ -302,12 +321,12 @@ function stepRoom(room: RoomState) {
   if (!room.player1.connected || !room.player2.connected) return;
   if (room.winner) return;
 
-  const stepX = room.puckVelocity.x / PHYSICS_SUBSTEPS;
-  const stepY = room.puckVelocity.y / PHYSICS_SUBSTEPS;
+  const stepVX = room.puckVelocity.x / PHYSICS_SUBSTEPS;
+  const stepVY = room.puckVelocity.y / PHYSICS_SUBSTEPS;
 
   for (let i = 0; i < PHYSICS_SUBSTEPS; i++) {
-    room.puck.x += stepX;
-    room.puck.y += stepY;
+    room.puck.x += stepVX;
+    room.puck.y += stepVY;
 
     if (room.puck.x <= PUCK_RADIUS) {
       room.puck.x = PUCK_RADIUS;
