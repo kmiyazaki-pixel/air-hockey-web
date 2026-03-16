@@ -135,16 +135,13 @@ export function useOnlineGame() {
           const sinceInput = performance.now() - lastLocalInputAtRef.current;
           const gap = distance(current, serverMe);
 
-          // 直近で自分が動かしている間はサーバ位置に引っ張り戻さない
           if (sinceInput < 80) {
             if (gap > 140) {
-              // 大きくズレた時だけ軽く補正
               return lerpVec(current, serverMe, 0.18);
             }
             return current;
           }
 
-          // 手を止めたらサーバ位置へなめらかに収束
           if (gap > 4) {
             return lerpVec(current, serverMe, gap > 80 ? 0.25 : 0.14);
           }
@@ -243,8 +240,8 @@ export function useOnlineGame() {
           roomState.winner === "PLAYER1"
             ? "PLAYER"
             : roomState.winner === "PLAYER2"
-            ? "CPU"
-            : null,
+              ? "CPU"
+              : null,
       } as const;
     }
 
@@ -259,8 +256,8 @@ export function useOnlineGame() {
         roomState.winner === "PLAYER2"
           ? "PLAYER"
           : roomState.winner === "PLAYER1"
-          ? "CPU"
-          : null,
+            ? "CPU"
+            : null,
     } as const;
   }, [playerNumber, localDisplayMallet, displayState, roomState]);
 
