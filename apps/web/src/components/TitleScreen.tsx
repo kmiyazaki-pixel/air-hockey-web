@@ -103,7 +103,8 @@ export function TitleScreen({
             border: "1px solid rgba(125,249,255,0.32)",
             borderRadius: 20,
             padding: "18px 20px",
-            background: "linear-gradient(180deg, rgba(125,249,255,0.18), rgba(125,249,255,0.06))",
+            background:
+              "linear-gradient(180deg, rgba(125,249,255,0.18), rgba(125,249,255,0.06))",
             color: "#fff",
             cursor: "pointer",
             fontSize: 18,
@@ -121,7 +122,8 @@ export function TitleScreen({
             border: "1px solid rgba(255,95,210,0.28)",
             borderRadius: 20,
             padding: "18px 20px",
-            background: "linear-gradient(180deg, rgba(255,95,210,0.16), rgba(255,95,210,0.05))",
+            background:
+              "linear-gradient(180deg, rgba(255,95,210,0.16), rgba(255,95,210,0.05))",
             color: "#fff",
             cursor: "pointer",
             fontSize: 18,
