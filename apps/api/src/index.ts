@@ -1,10 +1,14 @@
 import Fastify from "fastify";
+import cors from "@fastify/cors";
 import { WebSocketServer, WebSocket } from "ws";
 import pg from "pg";
 
 const { Pool } = pg;
 
 const PORT = Number(process.env.PORT ?? 4000);
+
+const DATABASE_URL = process.env.DATABASE_URL;
+const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
 const STEP_RATE = 1000 / 60;
 const BROADCAST_RATE = 1000 / 30;
 
@@ -90,6 +94,24 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
 
 const app = Fastify({ logger: true });
+import Fastify from "fastify";
+import cors from "@fastify/cors";
+import { WebSocketServer, WebSocket } from "ws";
+import pg from "pg";
+
+const { Pool } = pg;
+
+const PORT = Number(process.env.PORT ?? 4000);
+
+const DATABASE_URL = process.env.DATABASE_URL;
+const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
+
+const app = Fastify({ logger: true });
+
+await app.register(cors, {
+  origin: true,
+  methods: ["GET", "POST", "OPTIONS"],
+});
 const rooms = new Map<string, RoomState>();
 const socketToRoom = new WeakMap<
   WebSocket,
