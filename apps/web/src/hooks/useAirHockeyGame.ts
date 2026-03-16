@@ -29,31 +29,31 @@ const INITIAL_PUCK: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
 
 const DIFFICULTY_CONFIG: Record<CpuDifficulty, DifficultyConfig> = {
   easy: {
-    reaction: 0.075,
-    maxSpeed: 7.2,
-    attackBias: 0.24,
-    defendBias: 0.9,
-    error: 34,
-    puckTrackStrength: 0.72,
-    interceptStrength: 0.42,
+    reaction: 0.085,
+    maxSpeed: 8.2,
+    attackBias: 0.42,
+    defendBias: 0.82,
+    error: 30,
+    puckTrackStrength: 0.9,
+    interceptStrength: 0.52,
   },
   normal: {
-    reaction: 0.11,
-    maxSpeed: 9.8,
-    attackBias: 0.42,
-    defendBias: 1.0,
-    error: 18,
-    puckTrackStrength: 0.95,
-    interceptStrength: 0.7,
+    reaction: 0.125,
+    maxSpeed: 10.8,
+    attackBias: 0.68,
+    defendBias: 0.92,
+    error: 14,
+    puckTrackStrength: 1.08,
+    interceptStrength: 0.82,
   },
   hard: {
-    reaction: 0.17,
-    maxSpeed: 13.2,
-    attackBias: 0.68,
-    defendBias: 1.14,
-    error: 8,
-    puckTrackStrength: 1.14,
-    interceptStrength: 0.95,
+    reaction: 0.185,
+    maxSpeed: 14.2,
+    attackBias: 0.95,
+    defendBias: 1.0,
+    error: 6,
+    puckTrackStrength: 1.28,
+    interceptStrength: 1.05,
   },
 };
 
@@ -315,14 +315,14 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
         nextVelocity.y = -Math.abs(nextVelocity.y);
       }
 
-      const defendCenter = { x: WORLD_WIDTH / 2, y: 210 };
-      const attackAnchor = { x: WORLD_WIDTH / 2, y: 320 };
-      const puckComingUp = nextVelocity.y < 0;
-      const puckInCpuHalf = nextPuck.y < WORLD_HEIGHT * 0.62;
+      const defendCenter = { x: WORLD_WIDTH / 2, y: 250 };
+      const attackAnchor = { x: WORLD_WIDTH / 2, y: 430 };
+      const puckComingUp = nextVelocity.y < 1.2;
+      const puckInCpuHalf = nextPuck.y < WORLD_HEIGHT * 0.72;
 
       let target = defendCenter;
 
-      if (puckComingUp && puckInCpuHalf) {
+      if (puckComingUp && nextPuck.y < WORLD_HEIGHT * 0.58) {
         const projectedX = clamp(
           nextPuck.x + nextVelocity.x * 10 * cfg.interceptStrength,
           BOARD_PADDING + MALLET_RADIUS,
@@ -337,14 +337,23 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
             WORLD_HEIGHT * 0.42
           ),
         };
-      } else {
+      } else if (puckInCpuHalf) {
         target = {
           x: lerp(
             attackAnchor.x,
             nextPuck.x,
-            cfg.attackBias * cfg.puckTrackStrength
+            Math.min(1, cfg.attackBias * cfg.puckTrackStrength)
           ),
-          y: lerp(attackAnchor.y, nextPuck.y - 120, cfg.attackBias),
+          y: lerp(
+            attackAnchor.y,
+            nextPuck.y - 40,
+            Math.min(1, cfg.attackBias)
+          ),
+        };
+      } else {
+        target = {
+          x: lerp(defendCenter.x, WORLD_WIDTH / 2, 0.5),
+          y: lerp(defendCenter.y, 300, 0.6),
         };
       }
 
@@ -358,7 +367,12 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
 
       let nextCpu = currentCpu;
       if (cpuDist >= 1) {
-        const step = Math.min(cfg.maxSpeed, cpuDist * cfg.reaction);
+        const aggressionBoost =
+          difficulty === "hard" ? 1.18 : difficulty === "normal" ? 1.08 : 1;
+        const step = Math.min(
+          cfg.maxSpeed * aggressionBoost,
+          cpuDist * cfg.reaction * aggressionBoost
+        );
         nextCpu = clampCpuWorld(add(currentCpu, mul(normalize(cpuDelta), step)));
       } else {
         nextCpu = clampCpuWorld(currentCpu);
