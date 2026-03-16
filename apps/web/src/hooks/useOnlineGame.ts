@@ -73,7 +73,6 @@ export function useOnlineGame() {
   const animationRef = useRef<number | null>(null);
   const targetStateRef = useRef<RoomState>(EMPTY_ROOM);
   const playerNumberRef = useRef<PlayerNumber | null>(null);
-  const lastSentAtRef = useRef(0);
   const lastLocalInputAtRef = useRef(0);
 
   const [connected, setConnected] = useState(false);
@@ -135,15 +134,19 @@ export function useOnlineGame() {
           const sinceInput = performance.now() - lastLocalInputAtRef.current;
           const gap = distance(current, serverMe);
 
-          if (sinceInput < 80) {
-            if (gap > 140) {
-              return lerpVec(current, serverMe, 0.18);
+          if (sinceInput < 120) {
+            if (gap > 180) {
+              return lerpVec(current, serverMe, 0.22);
             }
             return current;
           }
 
-          if (gap > 4) {
-            return lerpVec(current, serverMe, gap > 80 ? 0.25 : 0.14);
+          if (gap > 80) {
+            return lerpVec(current, serverMe, 0.3);
+          }
+
+          if (gap > 8) {
+            return lerpVec(current, serverMe, 0.18);
           }
 
           return serverMe;
@@ -169,9 +172,9 @@ export function useOnlineGame() {
 
       setDisplayState((current) => ({
         ...target,
-        puck: lerpVec(current.puck, target.puck, 0.72),
-        player1: lerpVec(current.player1, target.player1, 0.35),
-        player2: lerpVec(current.player2, target.player2, 0.35),
+        puck: lerpVec(current.puck, target.puck, 0.78),
+        player1: lerpVec(current.player1, target.player1, 0.42),
+        player2: lerpVec(current.player2, target.player2, 0.42),
       }));
 
       animationRef.current = window.requestAnimationFrame(tick);
@@ -232,11 +235,6 @@ export function useOnlineGame() {
     lastLocalInputAtRef.current = performance.now();
 
     const world = currentPlayerNumber === 1 ? rotate180(local) : local;
-
-    const now = performance.now();
-    if (now - lastSentAtRef.current < 4) return;
-    lastSentAtRef.current = now;
-
     send({ type: "move", x: world.x, y: world.y });
   };
 
