@@ -1,16 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  screenToWorld,
-  clampPlayerWorld,
-  clampCpuWorld,
-  WORLD_WIDTH,
-  WORLD_HEIGHT,
-  PUCK_RADIUS,
-  MALLET_RADIUS,
-  BOARD_PADDING,
-  GOAL_WIDTH,
-  WIN_SCORE,
-} from "../utils/projection";
+import { screenToWorld, WORLD_WIDTH, WORLD_HEIGHT } from "../utils/projection";
 
 type Vec2 = { x: number; y: number };
 type Winner = "PLAYER" | "CPU" | null;
@@ -25,6 +14,16 @@ type DifficultyConfig = {
   puckTrackStrength: number;
   interceptStrength: number;
 };
+
+const PUCK_RADIUS = 22;
+const MALLET_RADIUS = 58;
+const BOARD_PADDING = 70;
+const GOAL_WIDTH = 320;
+const WIN_SCORE = 5;
+
+const INITIAL_PLAYER: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 230 };
+const INITIAL_CPU: Vec2 = { x: WORLD_WIDTH / 2, y: 230 };
+const INITIAL_PUCK: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
 
 const DIFFICULTY_CONFIG: Record<CpuDifficulty, DifficultyConfig> = {
   easy: {
@@ -56,10 +55,6 @@ const DIFFICULTY_CONFIG: Record<CpuDifficulty, DifficultyConfig> = {
   },
 };
 
-const INITIAL_PLAYER: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 230 };
-const INITIAL_CPU: Vec2 = { x: WORLD_WIDTH / 2, y: 230 };
-const INITIAL_PUCK: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
-
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(value, max));
 
@@ -75,6 +70,20 @@ const normalize = (v: Vec2): Vec2 => {
 
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
+}
+
+function clampPlayerWorld(pos: Vec2): Vec2 {
+  return {
+    x: clamp(pos.x, BOARD_PADDING + MALLET_RADIUS, WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS),
+    y: clamp(pos.y, WORLD_HEIGHT * 0.52, WORLD_HEIGHT - BOARD_PADDING - MALLET_RADIUS),
+  };
+}
+
+function clampCpuWorld(pos: Vec2): Vec2 {
+  return {
+    x: clamp(pos.x, BOARD_PADDING + MALLET_RADIUS, WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS),
+    y: clamp(pos.y, BOARD_PADDING + MALLET_RADIUS, WORLD_HEIGHT * 0.48),
+  };
 }
 
 function resetPuckDirection(towardPlayer: boolean) {
