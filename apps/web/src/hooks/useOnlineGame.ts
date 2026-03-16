@@ -221,7 +221,7 @@ export function useOnlineGame() {
     const world = currentPlayerNumber === 1 ? rotate180(local) : local;
 
     const now = performance.now();
-    if (now - lastSentAtRef.current < 8) return;
+    if (now - lastSentAtRef.current < 4) return;
     lastSentAtRef.current = now;
 
     send({ type: "move", x: world.x, y: world.y });
