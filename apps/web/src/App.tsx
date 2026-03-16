@@ -1,74 +1,409 @@
-import { useState } from "react";
-import { useAirHockeyGame, type CpuDifficulty } from "./hooks/useAirHockeyGame";
-import { TitleScreen } from "./components/TitleScreen";
+import { useEffect, useRef, useState } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 import GameBoard from "./components/GameBoard";
 import ScorePanel from "./components/ScorePanel";
+import TitleScreen from "./components/TitleScreen";
+import Mallet from "./components/Mallet";
+import Puck from "./components/Puck";
+import { screenToWorld, worldToScreen } from "./utils/projection";
+import { useAirHockeyGame } from "./hooks/useAirHockeyGame";
+import { useOnlineGame } from "./hooks/useOnlineGame";
 
 type Mode = "title" | "cpu" | "online";
 
-export default function App() {
+function App() {
   const [mode, setMode] = useState<Mode>("title");
-  const [difficulty, setDifficulty] = useState<CpuDifficulty>("normal");
 
-  const cpuGame = useAirHockeyGame(difficulty);
+  const cpuGame = useAirHockeyGame();
+  const onlineGame = useOnlineGame();
 
-  if (mode === "title") {
+  const pendingOnlineMoveRef = useRef<{ x: number; y: number } | null>(null);
+  const onlineMoveRafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (onlineMoveRafRef.current !== null) {
+        cancelAnimationFrame(onlineMoveRafRef.current);
+        onlineMoveRafRef.current = null;
+      }
+    };
+  }, []);
+
+  const flushOnlineMove = () => {
+    onlineMoveRafRef.current = null;
+
+    const move = pendingOnlineMoveRef.current;
+    pendingOnlineMoveRef.current = null;
+
+    if (!move) return;
+    if (!onlineGame.playerNumber) return;
+
+    onlineGame.sendMove(move.x, move.y);
+  };
+
+  const scheduleOnlineMove = (worldX: number, worldY: number) => {
+    pendingOnlineMoveRef.current = { x: worldX, y: worldY };
+
+    if (onlineMoveRafRef.current !== null) return;
+
+    onlineMoveRafRef.current = requestAnimationFrame(flushOnlineMove);
+  };
+
+  const renderArenaBackground = () => {
     return (
-      <TitleScreen
-        difficulty={difficulty}
-        onDifficultyChange={setDifficulty}
-        onStartCpu={() => setMode("cpu")}
-        onStartOnline={() => setMode("online")}
-      />
+      <>
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background:
+              "radial-gradient(circle at 50% 18%, rgba(125,249,255,0.16), rgba(125,249,255,0.02) 24%, rgba(0,0,0,0) 48%)",
+            pointerEvents: "none",
+          }}
+        />
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            background:
+              "radial-gradient(circle at 20% 22%, rgba(255,95,210,0.13), rgba(255,95,210,0) 26%), radial-gradient(circle at 82% 26%, rgba(125,249,255,0.12), rgba(125,249,255,0) 28%), radial-gradient(circle at 50% 86%, rgba(255,185,0,0.08), rgba(255,185,0,0) 32%)",
+            pointerEvents: "none",
+          }}
+        />
+        <div
+          style={{
+            position: "fixed",
+            left: "-10%",
+            right: "-10%",
+            bottom: "-6%",
+            height: "36vh",
+            background:
+              "linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0)), radial-gradient(ellipse at center, rgba(255,255,255,0.05), rgba(255,255,255,0) 68%)",
+            transform: "perspective(700px) rotateX(72deg)",
+            transformOrigin: "center bottom",
+            opacity: 0.26,
+            pointerEvents: "none",
+          }}
+        />
+      </>
     );
-  }
+  };
 
-  if (mode === "cpu") {
-    return (
-      <main
+  const handleCpuMove = (event: MouseEvent<HTMLDivElement>) => {
+    if (cpuGame.winner) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const { worldX, worldY } = screenToWorld(
+      event.clientX,
+      event.clientY,
+      rect
+    );
+
+    cpuGame.updatePlayerFromWorld(worldX, worldY);
+  };
+
+  const handleOnlineMove = (event: MouseEvent<HTMLDivElement>) => {
+    if (!onlineGame.playerNumber) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const { worldX, worldY } = screenToWorld(
+      event.clientX,
+      event.clientY,
+      rect
+    );
+
+    scheduleOnlineMove(worldX, worldY);
+  };
+
+  const cpuPuckScreen = worldToScreen(cpuGame.puck.x, cpuGame.puck.y);
+  const cpuPlayerScreen = worldToScreen(cpuGame.player.x, cpuGame.player.y);
+  const cpuOpponentScreen = worldToScreen(cpuGame.cpu.x, cpuGame.cpu.y);
+
+  const onlinePuckScreen = worldToScreen(
+    onlineGame.viewState.puck.x,
+    onlineGame.viewState.puck.y
+  );
+  const onlinePlayerScreen = worldToScreen(
+    onlineGame.viewState.me.x,
+    onlineGame.viewState.me.y
+  );
+  const onlineOpponentScreen = worldToScreen(
+    onlineGame.viewState.opponent.x,
+    onlineGame.viewState.opponent.y
+  );
+
+  const backToTitle = () => setMode("title");
+
+  const renderTitle = () => (
+    <>
+      <TitleScreen
+        onStart={() => {
+          cpuGame.startGame();
+          setMode("cpu");
+        }}
+        renderMallet={(x, y, scale, color, glow) => (
+          <Mallet x={x} y={y} scale={scale} color={color} glow={glow} />
+        )}
+        renderPuck={(x, y, scale) => <Puck x={x} y={y} scale={scale} />}
+      />
+
+      <div
         style={{
-          minHeight: "100vh",
+          maxWidth: 1160,
+          margin: "18px auto 0",
           display: "grid",
-          placeItems: "center",
-          padding: 16,
-          background: "#0b1020",
+          gridTemplateColumns: "1fr 1fr",
+          gap: 16,
         }}
       >
-        <div style={{ width: "100%", maxWidth: 1100 }}>
-          <ScorePanel
-            playerScore={cpuGame.playerScore}
-            opponentScore={cpuGame.cpuScore}
-            label={cpuGame.statusText}
-            onBack={() => setMode("title")}
-            onRestart={cpuGame.restart}
-          />
-          <GameBoard
-            mode="cpu"
-            player={cpuGame.player}
-            opponent={cpuGame.cpu}
-            puck={cpuGame.puck}
-            winner={cpuGame.winner}
-            onMove={cpuGame.movePlayer}
-          />
+        <button
+          onClick={() => {
+            cpuGame.startGame();
+            setMode("cpu");
+          }}
+          style={modeButtonStyle("#7df9ff")}
+        >
+          CPU対戦を始める
+        </button>
+
+        <button
+          onClick={() => setMode("online")}
+          style={modeButtonStyle("#ff5fd2")}
+        >
+          オンライン対戦 β
+        </button>
+      </div>
+    </>
+  );
+
+  const renderCpu = () => (
+    <div style={boardShellStyle}>
+      <ScorePanel
+        label="プレイヤー"
+        score={cpuGame.playerScore}
+        color="#7df9ff"
+        winScore={cpuGame.winScore}
+      />
+
+      <GameBoard
+        winner={cpuGame.winner}
+        status={cpuGame.status}
+        winScore={cpuGame.winScore}
+        onMouseMove={handleCpuMove}
+        onBack={() => {
+          cpuGame.backToTitle();
+          backToTitle();
+        }}
+        onRestart={cpuGame.startGame}
+        cpuScreen={cpuOpponentScreen}
+        playerScreen={cpuPlayerScreen}
+        puckScreen={cpuPuckScreen}
+      />
+
+      <ScorePanel
+        label="CPU"
+        score={cpuGame.cpuScore}
+        color="#ff5fd2"
+        winScore={cpuGame.winScore}
+      />
+    </div>
+  );
+
+  const renderOnline = () => (
+    <>
+      <div
+        style={{
+          maxWidth: 1120,
+          margin: "0 auto 16px",
+          display: "grid",
+          gridTemplateColumns: "1.2fr 1fr",
+          gap: 16,
+        }}
+      >
+        <div style={panelStyle}>
+          <div
+            style={{
+              fontWeight: "bold",
+              color: "#7df9ff",
+              marginBottom: 10,
+            }}
+          >
+            オンライン対戦 β
+          </div>
+
+          <div style={{ opacity: 0.86, lineHeight: 1.7, marginBottom: 14 }}>
+            同じ4桁の数字を入力すると同じ部屋に入ります。
+          </div>
+
+          <div
+            style={{
+              display: "flex",
+              gap: 10,
+              flexWrap: "wrap",
+              marginBottom: 12,
+            }}
+          >
+            <input
+              value={onlineGame.joinInput}
+              onChange={(event) =>
+                onlineGame.setJoinInput(
+                  event.target.value.replace(/\D/g, "").slice(0, 4)
+                )
+              }
+              placeholder="4桁の数字"
+              style={inputStyle}
+            />
+
+            <button
+              onClick={onlineGame.createRoom}
+              style={modeButtonStyle("#7df9ff")}
+            >
+              作成
+            </button>
+
+            <button
+              onClick={onlineGame.joinRoom}
+              style={modeButtonStyle("#ff5fd2")}
+            >
+              入室
+            </button>
+          </div>
+
+          <div style={{ fontSize: 14, opacity: 0.82, lineHeight: 1.8 }}>
+            <div>接続状態: {onlineGame.connected ? "接続中" : "未接続"}</div>
+            <div>ルーム: {onlineGame.roomId || "未参加"}</div>
+            <div>
+              プレイヤー番号:{" "}
+              {onlineGame.playerNumber ? `P${onlineGame.playerNumber}` : "-"}
+            </div>
+            <div>状態: {onlineGame.roomState.status}</div>
+            {onlineGame.error && (
+              <div style={{ color: "#ff9fbf" }}>エラー: {onlineGame.error}</div>
+            )}
+          </div>
         </div>
-      </main>
-    );
-  }
+
+        <div style={panelStyle}>
+          <div style={{ fontWeight: "bold", marginBottom: 10 }}>対戦情報</div>
+          <div style={{ lineHeight: 1.9, opacity: 0.86 }}>
+            <div>自分: {onlineGame.viewState.myScore}</div>
+            <div>相手: {onlineGame.viewState.opponentScore}</div>
+            <div>
+              相手の接続: {onlineGame.viewState.opponentConnected ? "接続中" : "未接続"}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+            <button onClick={onlineGame.restart} style={modeButtonStyle("#7df9ff")}>
+              再戦
+            </button>
+            <button onClick={backToTitle} style={modeButtonStyle("#ffffff")}>
+              戻る
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div style={boardShellStyle}>
+        <ScorePanel
+          label="相手"
+          score={onlineGame.viewState.opponentScore}
+          color="#ff5fd2"
+          winScore={5}
+        />
+
+        <GameBoard
+          winner={onlineGame.viewState.winner}
+          status={onlineGame.roomState.status}
+          winScore={5}
+          onMouseMove={handleOnlineMove}
+          onBack={backToTitle}
+          onRestart={onlineGame.restart}
+          cpuScreen={onlineOpponentScreen}
+          playerScreen={onlinePlayerScreen}
+          puckScreen={onlinePuckScreen}
+        />
+
+        <ScorePanel
+          label="あなた"
+          score={onlineGame.viewState.myScore}
+          color="#7df9ff"
+          winScore={5}
+        />
+      </div>
+    </>
+  );
 
   return (
-    <main
+    <div
       style={{
         minHeight: "100vh",
-        display: "grid",
-        placeItems: "center",
-        background: "#0b1020",
-        color: "#fff",
+        color: "white",
+        background:
+          "radial-gradient(circle at top, rgba(30,41,59,1) 0%, rgba(2,6,23,1) 38%, rgba(2,6,23,1) 100%)",
+        padding: "28px 18px 44px",
+        fontFamily:
+          "'Inter', 'Noto Sans JP', system-ui, -apple-system, BlinkMacSystemFont, sans-serif",
       }}
     >
-      <div style={{ textAlign: "center" }}>
-        <p style={{ marginBottom: 16 }}>オンライン画面は既存の実装を使ってください</p>
-        <button onClick={() => setMode("title")}>戻る</button>
+      {renderArenaBackground()}
+
+      <div style={{ position: "relative", zIndex: 1 }}>
+        {mode === "title" && renderTitle()}
+        {mode === "cpu" && renderCpu()}
+        {mode === "online" && renderOnline()}
       </div>
-    </main>
+    </div>
   );
 }
+
+const boardShellStyle: CSSProperties = {
+  maxWidth: 1160,
+  margin: "0 auto",
+  display: "grid",
+  gridTemplateColumns: "150px 1fr 150px",
+  gap: 18,
+  alignItems: "start",
+};
+
+const panelStyle: CSSProperties = {
+  border: "1px solid rgba(255,255,255,0.12)",
+  borderRadius: 20,
+  padding: 18,
+  background: "rgba(255,255,255,0.04)",
+  boxShadow: "0 12px 28px rgba(0,0,0,0.18)",
+};
+
+const inputStyle: CSSProperties = {
+  flex: 1,
+  minWidth: 180,
+  background: "rgba(255,255,255,0.06)",
+  border: "1px solid rgba(255,255,255,0.12)",
+  borderRadius: 14,
+  color: "white",
+  padding: "12px 14px",
+  fontSize: 16,
+  outline: "none",
+};
+
+const modeButtonStyle = (accent: string): CSSProperties => ({
+  appearance: "none",
+  border: `1px solid ${accent}44`,
+  borderRadius: 16,
+  padding: "12px 16px",
+  background:
+    accent === "#ffffff"
+      ? "rgba(255,255,255,0.08)"
+      : `linear-gradient(180deg, ${accent}22, ${accent}10)`,
+  color: "white",
+  fontSize: 15,
+  fontWeight: "bold",
+  letterSpacing: 0.3,
+  cursor: "pointer",
+  boxShadow:
+    accent === "#ffffff"
+      ? "0 10px 24px rgba(0,0,0,0.16)"
+      : `0 0 0 1px ${accent}22 inset, 0 10px 24px rgba(0,0,0,0.18)`,
+});
+
+export default App;
