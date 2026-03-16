@@ -1,18 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  BOARD_PADDING,
-  GOAL_WIDTH,
-  MALLET_RADIUS,
-  PUCK_RADIUS,
-  VIEW_HEIGHT,
-  VIEW_WIDTH,
-  WIN_SCORE,
-  WORLD_HEIGHT,
-  WORLD_WIDTH,
-  clampToBottomHalf,
-  clampToTopHalf,
-  toWorld,
-} from "../utils/projection";
 
 type Vec2 = { x: number; y: number };
 type Winner = "PLAYER" | "CPU" | null;
@@ -27,6 +13,20 @@ type DifficultyConfig = {
   puckTrackStrength: number;
   interceptStrength: number;
 };
+
+const WORLD_WIDTH = 1000;
+const WORLD_HEIGHT = 1600;
+const VIEW_WIDTH = 700;
+const VIEW_HEIGHT = 1120;
+const BOARD_PADDING = 70;
+const GOAL_WIDTH = 320;
+const MALLET_RADIUS = 58;
+const PUCK_RADIUS = 22;
+const WIN_SCORE = 5;
+
+const INITIAL_PLAYER: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 230 };
+const INITIAL_CPU: Vec2 = { x: WORLD_WIDTH / 2, y: 230 };
+const INITIAL_PUCK: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
 
 const DIFFICULTY_CONFIG: Record<CpuDifficulty, DifficultyConfig> = {
   easy: {
@@ -58,10 +58,6 @@ const DIFFICULTY_CONFIG: Record<CpuDifficulty, DifficultyConfig> = {
   },
 };
 
-const INITIAL_PLAYER: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 230 };
-const INITIAL_CPU: Vec2 = { x: WORLD_WIDTH / 2, y: 230 };
-const INITIAL_PUCK: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
-
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(value, max));
 
@@ -75,6 +71,30 @@ const normalize = (v: Vec2): Vec2 => {
 const add = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x + b.x, y: a.y + b.y });
 const sub = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x - b.x, y: a.y - b.y });
 const mul = (v: Vec2, s: number): Vec2 => ({ x: v.x * s, y: v.y * s });
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+function toWorld(clientX: number, clientY: number, rect: DOMRect): Vec2 {
+  const x = ((clientX - rect.left) / rect.width) * WORLD_WIDTH;
+  const y = ((clientY - rect.top) / rect.height) * WORLD_HEIGHT;
+  return { x, y };
+}
+
+function clampToBottomHalf(pos: Vec2): Vec2 {
+  return {
+    x: clamp(pos.x, BOARD_PADDING + MALLET_RADIUS, WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS),
+    y: clamp(pos.y, WORLD_HEIGHT * 0.52, WORLD_HEIGHT - BOARD_PADDING - MALLET_RADIUS),
+  };
+}
+
+function clampToTopHalf(pos: Vec2): Vec2 {
+  return {
+    x: clamp(pos.x, BOARD_PADDING + MALLET_RADIUS, WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS),
+    y: clamp(pos.y, BOARD_PADDING + MALLET_RADIUS, WORLD_HEIGHT * 0.48),
+  };
+}
 
 function resetPuckDirection(towardPlayer: boolean) {
   const x = (Math.random() - 0.5) * 6;
@@ -284,9 +304,7 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
     movePlayer,
     restart,
     difficulty,
+    viewWidth: VIEW_WIDTH,
+    viewHeight: VIEW_HEIGHT,
   };
-}
-
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
 }
