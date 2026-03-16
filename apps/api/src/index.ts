@@ -1,5 +1,8 @@
 import Fastify from "fastify";
 import { WebSocketServer, WebSocket } from "ws";
+import pg from "pg";
+
+const { Pool } = pg;
 
 const PORT = Number(process.env.PORT ?? 4000);
 const STEP_RATE = 1000 / 60;
@@ -27,6 +30,7 @@ const MAX_PUCK_SPEED = 12.5;
 type Vec2 = { x: number; y: number };
 type PlayerNumber = 1 | 2;
 type Winner = "PLAYER1" | "PLAYER2" | null;
+type CpuDifficulty = "easy" | "normal" | "hard";
 
 type ClientMessage =
   | { type: "create_room"; roomId: string }
@@ -74,6 +78,17 @@ type RoomState = {
   tick: number;
 };
 
+type CpuRankingRow = {
+  id: number;
+  name: string;
+  difficulty: CpuDifficulty;
+  time_ms: number;
+  created_at: string;
+};
+
+const DATABASE_URL = process.env.DATABASE_URL;
+const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
+
 const app = Fastify({ logger: true });
 const rooms = new Map<string, RoomState>();
 const socketToRoom = new WeakMap<
@@ -87,6 +102,10 @@ function clamp(value: number, min: number, max: number) {
 
 function isValidRoomId(roomId: string) {
   return /^\d{4}$/.test(roomId);
+}
+
+function isValidDifficulty(value: string): value is CpuDifficulty {
+  return value === "easy" || value === "normal" || value === "hard";
 }
 
 function cloneVec(v: Vec2): Vec2 {
@@ -535,18 +554,141 @@ function stepRoom(room: RoomState) {
   endPhysicsFrame(room);
 }
 
+async function ensureRankingTable() {
+  if (!pool) {
+    app.log.warn("DATABASE_URL is not set. Ranking API will be disabled.");
+    return;
+  }
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS cpu_rankings (
+      id BIGSERIAL PRIMARY KEY,
+      name VARCHAR(20) NOT NULL,
+      difficulty VARCHAR(10) NOT NULL CHECK (difficulty IN ('easy', 'normal', 'hard')),
+      time_ms INTEGER NOT NULL CHECK (time_ms > 0),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await pool.query(`
+    CREATE INDEX IF NOT EXISTS cpu_rankings_difficulty_time_idx
+    ON cpu_rankings (difficulty, time_ms ASC, created_at ASC)
+  `);
+}
+
 app.get("/health", async () => {
-  return { ok: true, rooms: rooms.size };
+  return { ok: true, rooms: rooms.size, db: Boolean(pool) };
 });
 
 app.get("/", async () => {
   return { ok: true, message: "Air Hockey API" };
 });
 
-app.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
+app.get("/rankings/cpu", async (request, reply) => {
+  if (!pool) {
+    return reply.code(503).send({ error: "database_unavailable" });
+  }
+
+  const difficulty = String((request.query as { difficulty?: string }).difficulty ?? "");
+
+  if (!isValidDifficulty(difficulty)) {
+    return reply.code(400).send({ error: "invalid_difficulty" });
+  }
+
+  const result = await pool.query<CpuRankingRow>(
+    `
+      SELECT id, name, difficulty, time_ms, created_at
+      FROM cpu_rankings
+      WHERE difficulty = $1
+      ORDER BY time_ms ASC, created_at ASC
+      LIMIT 10
+    `,
+    [difficulty]
+  );
+
+  return {
+    difficulty,
+    items: result.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      difficulty: row.difficulty,
+      timeMs: row.time_ms,
+      createdAt: row.created_at,
+    })),
+  };
+});
+
+app.post("/rankings/cpu", async (request, reply) => {
+  if (!pool) {
+    return reply.code(503).send({ error: "database_unavailable" });
+  }
+
+  const body = request.body as {
+    name?: unknown;
+    difficulty?: unknown;
+    timeMs?: unknown;
+  };
+
+  const name = typeof body.name === "string" ? body.name.trim().slice(0, 20) : "";
+  const difficulty =
+    typeof body.difficulty === "string" ? body.difficulty : "";
+  const timeMs = typeof body.timeMs === "number" ? Math.floor(body.timeMs) : NaN;
+
+  if (!name) {
+    return reply.code(400).send({ error: "invalid_name" });
+  }
+
+  if (!isValidDifficulty(difficulty)) {
+    return reply.code(400).send({ error: "invalid_difficulty" });
+  }
+
+  if (!Number.isFinite(timeMs) || timeMs <= 0) {
+    return reply.code(400).send({ error: "invalid_time" });
+  }
+
+  await pool.query(
+    `
+      INSERT INTO cpu_rankings (name, difficulty, time_ms)
+      VALUES ($1, $2, $3)
+    `,
+    [name, difficulty, timeMs]
+  );
+
+  const result = await pool.query<CpuRankingRow>(
+    `
+      SELECT id, name, difficulty, time_ms, created_at
+      FROM cpu_rankings
+      WHERE difficulty = $1
+      ORDER BY time_ms ASC, created_at ASC
+      LIMIT 10
+    `,
+    [difficulty]
+  );
+
+  return reply.code(201).send({
+    ok: true,
+    difficulty,
+    items: result.rows.map((row) => ({
+      id: row.id,
+      name: row.name,
+      difficulty: row.difficulty,
+      timeMs: row.time_ms,
+      createdAt: row.created_at,
+    })),
+  });
+});
+
+app.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
   if (err) {
     app.log.error(err);
     process.exit(1);
+  }
+
+  try {
+    await ensureRankingTable();
+    app.log.info("Ranking table is ready");
+  } catch (dbError) {
+    app.log.error(dbError);
   }
 
   const wss = new WebSocketServer({
