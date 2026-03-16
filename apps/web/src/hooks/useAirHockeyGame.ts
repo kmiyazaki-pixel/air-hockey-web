@@ -20,6 +20,8 @@ const MALLET_RADIUS = 58;
 const BOARD_PADDING = 70;
 const GOAL_WIDTH = 320;
 const WIN_SCORE = 5;
+const MAX_PUCK_SPEED = 16;
+const FRICTION = 0.995;
 
 const INITIAL_PLAYER: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 230 };
 const INITIAL_CPU: Vec2 = { x: WORLD_WIDTH / 2, y: 230 };
@@ -74,15 +76,31 @@ function lerp(a: number, b: number, t: number) {
 
 function clampPlayerWorld(pos: Vec2): Vec2 {
   return {
-    x: clamp(pos.x, BOARD_PADDING + MALLET_RADIUS, WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS),
-    y: clamp(pos.y, WORLD_HEIGHT * 0.52, WORLD_HEIGHT - BOARD_PADDING - MALLET_RADIUS),
+    x: clamp(
+      pos.x,
+      BOARD_PADDING + MALLET_RADIUS,
+      WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS
+    ),
+    y: clamp(
+      pos.y,
+      WORLD_HEIGHT * 0.52,
+      WORLD_HEIGHT - BOARD_PADDING - MALLET_RADIUS
+    ),
   };
 }
 
 function clampCpuWorld(pos: Vec2): Vec2 {
   return {
-    x: clamp(pos.x, BOARD_PADDING + MALLET_RADIUS, WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS),
-    y: clamp(pos.y, BOARD_PADDING + MALLET_RADIUS, WORLD_HEIGHT * 0.48),
+    x: clamp(
+      pos.x,
+      BOARD_PADDING + MALLET_RADIUS,
+      WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS
+    ),
+    y: clamp(
+      pos.y,
+      BOARD_PADDING + MALLET_RADIUS,
+      WORLD_HEIGHT * 0.48
+    ),
   };
 }
 
@@ -93,31 +111,43 @@ function resetPuckDirection(towardPlayer: boolean) {
   };
 }
 
-function resolveCollision(
+function capSpeed(v: Vec2, max: number) {
+  const speed = length(v);
+  if (speed <= max || speed === 0) return v;
+  return mul(normalize(v), max);
+}
+
+function resolveMalletCollision(
   puck: Vec2,
   puckVelocity: Vec2,
-  mallet: Vec2
+  mallet: Vec2,
+  malletVelocity: Vec2
 ): { puck: Vec2; velocity: Vec2 } {
   const diff = sub(puck, mallet);
   const dist = length(diff);
   const minDist = PUCK_RADIUS + MALLET_RADIUS;
 
-  if (dist >= minDist || dist === 0) {
+  if (dist >= minDist) {
     return { puck, velocity: puckVelocity };
   }
 
-  const normal = normalize(diff);
+  const normal =
+    dist > 0.0001 ? normalize(diff) : normalize({ x: 0, y: 1 });
+
   const pushedPuck = add(mallet, mul(normal, minDist + 1));
 
-  const incomingAlongNormal =
-    puckVelocity.x * normal.x + puckVelocity.y * normal.y;
-  const reflect = sub(puckVelocity, mul(normal, 2 * incomingAlongNormal));
+  let nextVelocity = add(
+    puckVelocity,
+    mul(malletVelocity, 0.55)
+  );
 
-  let nextVelocity = add(reflect, mul(normal, 1.8));
-  const speed = Math.max(8, length(nextVelocity));
-  const capped = Math.min(speed, 15);
+  const alongNormal = nextVelocity.x * normal.x + nextVelocity.y * normal.y;
+  if (alongNormal < 5.5) {
+    nextVelocity = add(nextVelocity, mul(normal, 5.5 - alongNormal));
+  }
 
-  nextVelocity = mul(normalize(nextVelocity), capped);
+  nextVelocity = add(nextVelocity, mul(normal, 1.8));
+  nextVelocity = capSpeed(nextVelocity, MAX_PUCK_SPEED);
 
   return { puck: pushedPuck, velocity: nextVelocity };
 }
@@ -132,7 +162,13 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
   const [started, setStarted] = useState(false);
   const [status, setStatus] = useState("READY");
 
+  const playerRef = useRef<Vec2>(INITIAL_PLAYER);
+  const prevPlayerRef = useRef<Vec2>(INITIAL_PLAYER);
+  const cpuRef = useRef<Vec2>(INITIAL_CPU);
+  const prevCpuRef = useRef<Vec2>(INITIAL_CPU);
+  const puckRef = useRef<Vec2>(INITIAL_PUCK);
   const puckVelocityRef = useRef<Vec2>(resetPuckDirection(true));
+
   const animationRef = useRef<number | null>(null);
   const difficultyRef = useRef<DifficultyConfig>(DIFFICULTY_CONFIG[difficulty]);
 
@@ -140,12 +176,32 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
     difficultyRef.current = DIFFICULTY_CONFIG[difficulty];
   }, [difficulty]);
 
-  const resetPositionsOnly = useCallback((towardPlayer: boolean) => {
-    setPlayer(INITIAL_PLAYER);
-    setCpu(INITIAL_CPU);
-    setPuck(INITIAL_PUCK);
-    puckVelocityRef.current = resetPuckDirection(towardPlayer);
+  const syncPlayer = useCallback((next: Vec2) => {
+    playerRef.current = next;
+    setPlayer(next);
   }, []);
+
+  const syncCpu = useCallback((next: Vec2) => {
+    cpuRef.current = next;
+    setCpu(next);
+  }, []);
+
+  const syncPuck = useCallback((next: Vec2) => {
+    puckRef.current = next;
+    setPuck(next);
+  }, []);
+
+  const resetPositionsOnly = useCallback(
+    (towardPlayer: boolean) => {
+      prevPlayerRef.current = INITIAL_PLAYER;
+      prevCpuRef.current = INITIAL_CPU;
+      syncPlayer(INITIAL_PLAYER);
+      syncCpu(INITIAL_CPU);
+      syncPuck(INITIAL_PUCK);
+      puckVelocityRef.current = resetPuckDirection(towardPlayer);
+    },
+    [syncCpu, syncPlayer, syncPuck]
+  );
 
   const startGame = useCallback(() => {
     setStarted(true);
@@ -169,20 +225,29 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
     setStatus("READY");
     setPlayerScore(0);
     setCpuScore(0);
-    setPlayer(INITIAL_PLAYER);
-    setCpu(INITIAL_CPU);
-    setPuck(INITIAL_PUCK);
+    prevPlayerRef.current = INITIAL_PLAYER;
+    prevCpuRef.current = INITIAL_CPU;
+    syncPlayer(INITIAL_PLAYER);
+    syncCpu(INITIAL_CPU);
+    syncPuck(INITIAL_PUCK);
     puckVelocityRef.current = resetPuckDirection(true);
-  }, []);
+  }, [syncCpu, syncPlayer, syncPuck]);
 
-  const updatePlayerFromWorld = useCallback((worldX: number, worldY: number) => {
-    setPlayer(clampPlayerWorld({ x: worldX, y: worldY }));
-  }, []);
+  const updatePlayerFromWorld = useCallback(
+    (worldX: number, worldY: number) => {
+      const next = clampPlayerWorld({ x: worldX, y: worldY });
+      syncPlayer(next);
+    },
+    [syncPlayer]
+  );
 
-  const movePlayer = useCallback((clientX: number, clientY: number, rect: DOMRect) => {
-    const { worldX, worldY } = screenToWorld(clientX, clientY, rect);
-    updatePlayerFromWorld(worldX, worldY);
-  }, [updatePlayerFromWorld]);
+  const movePlayer = useCallback(
+    (clientX: number, clientY: number, rect: DOMRect) => {
+      const { worldX, worldY } = screenToWorld(clientX, clientY, rect);
+      updatePlayerFromWorld(worldX, worldY);
+    },
+    [updatePlayerFromWorld]
+  );
 
   useEffect(() => {
     const loop = () => {
@@ -191,132 +256,154 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
         return;
       }
 
-      setPuck((currentPuck) => {
-        const cfg = difficultyRef.current;
+      const cfg = difficultyRef.current;
 
-        let nextPuck = add(currentPuck, puckVelocityRef.current);
-        let nextVelocity = { ...puckVelocityRef.current };
+      const currentPlayer = playerRef.current;
+      const currentCpu = cpuRef.current;
+      const currentPuck = puckRef.current;
 
-        if (nextPuck.x <= BOARD_PADDING + PUCK_RADIUS) {
-          nextPuck.x = BOARD_PADDING + PUCK_RADIUS;
-          nextVelocity.x *= -1;
-        }
-        if (nextPuck.x >= WORLD_WIDTH - BOARD_PADDING - PUCK_RADIUS) {
-          nextPuck.x = WORLD_WIDTH - BOARD_PADDING - PUCK_RADIUS;
-          nextVelocity.x *= -1;
-        }
+      const playerVelocity = sub(currentPlayer, prevPlayerRef.current);
+      const cpuVelocityPrev = sub(currentCpu, prevCpuRef.current);
 
-        const inGoalX =
-          nextPuck.x >= WORLD_WIDTH / 2 - GOAL_WIDTH / 2 &&
-          nextPuck.x <= WORLD_WIDTH / 2 + GOAL_WIDTH / 2;
+      let nextPuck = add(currentPuck, puckVelocityRef.current);
+      let nextVelocity = { ...puckVelocityRef.current };
 
-        if (nextPuck.y <= BOARD_PADDING + PUCK_RADIUS) {
-          if (inGoalX) {
-            setPlayerScore((score) => {
-              const next = score + 1;
-              if (next >= WIN_SCORE) {
-                setWinner("PLAYER");
-                setStatus("あなたの勝ち！");
-              } else {
-                setStatus(`CPU: ${difficulty.toUpperCase()}`);
-              }
-              return next;
-            });
-            resetPositionsOnly(false);
-            return INITIAL_PUCK;
-          }
+      if (nextPuck.x <= BOARD_PADDING + PUCK_RADIUS) {
+        nextPuck.x = BOARD_PADDING + PUCK_RADIUS;
+        nextVelocity.x = Math.abs(nextVelocity.x);
+      }
+      if (nextPuck.x >= WORLD_WIDTH - BOARD_PADDING - PUCK_RADIUS) {
+        nextPuck.x = WORLD_WIDTH - BOARD_PADDING - PUCK_RADIUS;
+        nextVelocity.x = -Math.abs(nextVelocity.x);
+      }
 
-          nextPuck.y = BOARD_PADDING + PUCK_RADIUS;
-          nextVelocity.y *= -1;
-        }
+      const inGoalX =
+        nextPuck.x >= WORLD_WIDTH / 2 - GOAL_WIDTH / 2 &&
+        nextPuck.x <= WORLD_WIDTH / 2 + GOAL_WIDTH / 2;
 
-        if (nextPuck.y >= WORLD_HEIGHT - BOARD_PADDING - PUCK_RADIUS) {
-          if (inGoalX) {
-            setCpuScore((score) => {
-              const next = score + 1;
-              if (next >= WIN_SCORE) {
-                setWinner("CPU");
-                setStatus("CPUの勝ち！");
-              } else {
-                setStatus(`CPU: ${difficulty.toUpperCase()}`);
-              }
-              return next;
-            });
-            resetPositionsOnly(true);
-            return INITIAL_PUCK;
-          }
-
-          nextPuck.y = WORLD_HEIGHT - BOARD_PADDING - PUCK_RADIUS;
-          nextVelocity.y *= -1;
+      if (nextPuck.y <= BOARD_PADDING + PUCK_RADIUS) {
+        if (inGoalX) {
+          setPlayerScore((score) => {
+            const next = score + 1;
+            if (next >= WIN_SCORE) {
+              setWinner("PLAYER");
+              setStatus("あなたの勝ち！");
+            } else {
+              setStatus(`CPU: ${difficulty.toUpperCase()}`);
+            }
+            return next;
+          });
+          resetPositionsOnly(false);
+          animationRef.current = requestAnimationFrame(loop);
+          return;
         }
 
-        setCpu((currentCpu) => {
-          const defendCenter = { x: WORLD_WIDTH / 2, y: 210 };
-          const attackAnchor = { x: WORLD_WIDTH / 2, y: 320 };
-          const puckComingUp = nextVelocity.y < 0;
-          const puckInCpuHalf = nextPuck.y < WORLD_HEIGHT * 0.62;
+        nextPuck.y = BOARD_PADDING + PUCK_RADIUS;
+        nextVelocity.y = Math.abs(nextVelocity.y);
+      }
 
-          let target = defendCenter;
+      if (nextPuck.y >= WORLD_HEIGHT - BOARD_PADDING - PUCK_RADIUS) {
+        if (inGoalX) {
+          setCpuScore((score) => {
+            const next = score + 1;
+            if (next >= WIN_SCORE) {
+              setWinner("CPU");
+              setStatus("CPUの勝ち！");
+            } else {
+              setStatus(`CPU: ${difficulty.toUpperCase()}`);
+            }
+            return next;
+          });
+          resetPositionsOnly(true);
+          animationRef.current = requestAnimationFrame(loop);
+          return;
+        }
 
-          if (puckComingUp && puckInCpuHalf) {
-            const projectedX = clamp(
-              nextPuck.x + nextVelocity.x * 10 * cfg.interceptStrength,
-              BOARD_PADDING + MALLET_RADIUS,
-              WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS
-            );
-            target = {
-              x: projectedX,
-              y: clamp(
-                nextPuck.y - 90 * cfg.defendBias,
-                BOARD_PADDING + MALLET_RADIUS,
-                WORLD_HEIGHT * 0.42
-              ),
-            };
-          } else {
-            target = {
-              x: lerp(attackAnchor.x, nextPuck.x, cfg.attackBias * cfg.puckTrackStrength),
-              y: lerp(attackAnchor.y, nextPuck.y - 120, cfg.attackBias),
-            };
-          }
+        nextPuck.y = WORLD_HEIGHT - BOARD_PADDING - PUCK_RADIUS;
+        nextVelocity.y = -Math.abs(nextVelocity.y);
+      }
 
-          const noisyTarget = {
-            x: target.x + (Math.random() - 0.5) * cfg.error,
-            y: target.y + (Math.random() - 0.5) * cfg.error * 0.4,
-          };
+      const defendCenter = { x: WORLD_WIDTH / 2, y: 210 };
+      const attackAnchor = { x: WORLD_WIDTH / 2, y: 320 };
+      const puckComingUp = nextVelocity.y < 0;
+      const puckInCpuHalf = nextPuck.y < WORLD_HEIGHT * 0.62;
 
-          const delta = sub(noisyTarget, currentCpu);
-          const dist = length(delta);
+      let target = defendCenter;
 
-          if (dist < 1) return clampCpuWorld(currentCpu);
+      if (puckComingUp && puckInCpuHalf) {
+        const projectedX = clamp(
+          nextPuck.x + nextVelocity.x * 10 * cfg.interceptStrength,
+          BOARD_PADDING + MALLET_RADIUS,
+          WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS
+        );
 
-          const step = Math.min(cfg.maxSpeed, dist * cfg.reaction);
-          const moved = add(currentCpu, mul(normalize(delta), step));
-          return clampCpuWorld(moved);
-        });
+        target = {
+          x: projectedX,
+          y: clamp(
+            nextPuck.y - 90 * cfg.defendBias,
+            BOARD_PADDING + MALLET_RADIUS,
+            WORLD_HEIGHT * 0.42
+          ),
+        };
+      } else {
+        target = {
+          x: lerp(
+            attackAnchor.x,
+            nextPuck.x,
+            cfg.attackBias * cfg.puckTrackStrength
+          ),
+          y: lerp(attackAnchor.y, nextPuck.y - 120, cfg.attackBias),
+        };
+      }
 
-        setPlayer((currentPlayer) => {
-          const result = resolveCollision(nextPuck, nextVelocity, currentPlayer);
-          nextPuck = result.puck;
-          nextVelocity = result.velocity;
-          return currentPlayer;
-        });
+      const noisyTarget = {
+        x: target.x + (Math.random() - 0.5) * cfg.error,
+        y: target.y + (Math.random() - 0.5) * cfg.error * 0.4,
+      };
 
-        setCpu((currentCpu) => {
-          const result = resolveCollision(nextPuck, nextVelocity, currentCpu);
-          nextPuck = result.puck;
-          nextVelocity = result.velocity;
-          return currentCpu;
-        });
+      const cpuDelta = sub(noisyTarget, currentCpu);
+      const cpuDist = length(cpuDelta);
 
-        nextVelocity.x *= 0.995;
-        nextVelocity.y *= 0.995;
+      let nextCpu = currentCpu;
+      if (cpuDist >= 1) {
+        const step = Math.min(cfg.maxSpeed, cpuDist * cfg.reaction);
+        nextCpu = clampCpuWorld(add(currentCpu, mul(normalize(cpuDelta), step)));
+      } else {
+        nextCpu = clampCpuWorld(currentCpu);
+      }
 
-        if (Math.abs(nextVelocity.x) < 0.03) nextVelocity.x = 0;
-        if (Math.abs(nextVelocity.y) < 0.03) nextVelocity.y = 0;
+      const cpuVelocity = sub(nextCpu, currentCpu);
 
-        puckVelocityRef.current = nextVelocity;
-        return nextPuck;
-      });
+      let collision = resolveMalletCollision(
+        nextPuck,
+        nextVelocity,
+        currentPlayer,
+        playerVelocity
+      );
+      nextPuck = collision.puck;
+      nextVelocity = collision.velocity;
+
+      collision = resolveMalletCollision(
+        nextPuck,
+        nextVelocity,
+        nextCpu,
+        cpuVelocity
+      );
+      nextPuck = collision.puck;
+      nextVelocity = collision.velocity;
+
+      nextVelocity.x *= FRICTION;
+      nextVelocity.y *= FRICTION;
+
+      if (Math.abs(nextVelocity.x) < 0.03) nextVelocity.x = 0;
+      if (Math.abs(nextVelocity.y) < 0.03) nextVelocity.y = 0;
+
+      prevPlayerRef.current = currentPlayer;
+      prevCpuRef.current = currentCpu;
+
+      syncCpu(nextCpu);
+      syncPuck(nextPuck);
+      puckVelocityRef.current = nextVelocity;
 
       animationRef.current = requestAnimationFrame(loop);
     };
@@ -328,7 +415,7 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [started, winner, difficulty, resetPositionsOnly]);
+  }, [started, winner, difficulty, resetPositionsOnly, syncCpu, syncPuck]);
 
   const statusText = useMemo(() => {
     if (winner === "PLAYER") return "あなたの勝ち！";
