@@ -10,7 +10,7 @@ const WORLD_HEIGHT = 1600;
 const GOAL_WIDTH = 320;
 const PUCK_RADIUS = 22;
 const MALLET_RADIUS = 58;
-const COLLISION_BONUS = 16;
+const COLLISION_BONUS = 8;
 const WIN_SCORE = 5;
 const TABLE_MIN_X = 70;
 const TABLE_MAX_X = WORLD_WIDTH - 70;
@@ -19,8 +19,7 @@ const PLAYER1_MAX_Y = WORLD_HEIGHT * 0.38;
 const PLAYER2_MIN_Y = WORLD_HEIGHT * 0.5 + 40;
 const PLAYER2_MAX_Y = WORLD_HEIGHT - 40;
 
-// 透け対策
-const PHYSICS_SUBSTEPS = 8;
+const PHYSICS_SUBSTEPS = 6;
 const MAX_MALLET_STEP = 70;
 
 type Vec2 = { x: number; y: number };
@@ -53,7 +52,6 @@ type RoomSnapshot = {
 type PlayerSlot = {
   socket: WebSocket;
   mallet: Vec2;
-  prevMallet: Vec2;
   connected: boolean;
 };
 
@@ -88,14 +86,6 @@ function cloneVec(v: Vec2): Vec2 {
   return { x: v.x, y: v.y };
 }
 
-function distance(a: Vec2, b: Vec2) {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-function lerp(a: number, b: number, t: number) {
-  return a + (b - a) * t;
-}
-
 function clampMove(prev: Vec2, next: Vec2, maxStep: number): Vec2 {
   const dx = next.x - prev.x;
   const dy = next.y - prev.y;
@@ -107,27 +97,6 @@ function clampMove(prev: Vec2, next: Vec2, maxStep: number): Vec2 {
   return {
     x: prev.x + dx * ratio,
     y: prev.y + dy * ratio,
-  };
-}
-
-function closestPointOnSegment(a: Vec2, b: Vec2, p: Vec2) {
-  const abx = b.x - a.x;
-  const aby = b.y - a.y;
-  const abLenSq = abx * abx + aby * aby;
-
-  if (abLenSq === 0) {
-    return { x: a.x, y: a.y, t: 0 };
-  }
-
-  const apx = p.x - a.x;
-  const apy = p.y - a.y;
-  const rawT = (apx * abx + apy * aby) / abLenSq;
-  const t = clamp(rawT, 0, 1);
-
-  return {
-    x: a.x + abx * t,
-    y: a.y + aby * t,
-    t,
   };
 }
 
@@ -153,11 +122,6 @@ function resetRound(room: RoomState, toward: PlayerNumber) {
   };
 }
 
-function resetPlayerPosition(slot: PlayerSlot, pos: Vec2) {
-  slot.mallet = cloneVec(pos);
-  slot.prevMallet = cloneVec(pos);
-}
-
 function resetMatch(room: RoomState) {
   room.player1Score = 0;
   room.player2Score = 0;
@@ -165,11 +129,11 @@ function resetMatch(room: RoomState) {
   room.status = room.player1 && room.player2 ? "プレイ中" : "待機中";
 
   if (room.player1) {
-    resetPlayerPosition(room.player1, { x: 500, y: 210 });
+    room.player1.mallet = { x: 500, y: 210 };
   }
 
   if (room.player2) {
-    resetPlayerPosition(room.player2, { x: 500, y: 1350 });
+    room.player2.mallet = { x: 500, y: 1350 };
   }
 
   resetRound(room, 2);
@@ -250,13 +214,10 @@ function attachPlayer(
   socket: WebSocket,
   playerNumber: PlayerNumber
 ) {
-  const initialPos = playerNumber === 1 ? { x: 500, y: 210 } : { x: 500, y: 1350 };
-
   const slot: PlayerSlot = {
     socket,
     connected: true,
-    mallet: cloneVec(initialPos),
-    prevMallet: cloneVec(initialPos),
+    mallet: playerNumber === 1 ? { x: 500, y: 210 } : { x: 500, y: 1350 },
   };
 
   if (playerNumber === 1) {
@@ -325,28 +286,26 @@ function handleMove(socket: WebSocket, x: number, y: number) {
           y: clamp(y, PLAYER2_MIN_Y, PLAYER2_MAX_Y),
         };
 
-  slot.prevMallet = cloneVec(slot.mallet);
   slot.mallet = clampMove(slot.mallet, clamped, MAX_MALLET_STEP);
 }
 
-function applyMalletCollision(
-  room: RoomState,
-  hitPoint: Vec2,
-  label: "PLAYER1" | "PLAYER2"
-) {
-  const dx = room.puck.x - hitPoint.x;
-  const dy = room.puck.y - hitPoint.y;
-  const dist = Math.hypot(dx, dy) || 1;
-  const nx = dx / dist;
-  const ny = dy / dist;
+function collide(room: RoomState, player: PlayerSlot, label: "PLAYER1" | "PLAYER2") {
+  const dx = room.puck.x - player.mallet.x;
+  const dy = room.puck.y - player.mallet.y;
+  const dist = Math.hypot(dx, dy);
+  const minDistance = PUCK_RADIUS + MALLET_RADIUS + COLLISION_BONUS;
+
+  if (dist >= minDistance) return false;
+
+  const nx = dx / (dist || 1);
+  const ny = dy / (dist || 1);
 
   const currentSpeed = Math.hypot(room.puckVelocity.x, room.puckVelocity.y);
-  const nextSpeed = Math.min(13.5, Math.max(7.2, currentSpeed + 1.0));
-  const separation = PUCK_RADIUS + MALLET_RADIUS + COLLISION_BONUS;
+  const nextSpeed = Math.min(11.5, currentSpeed + 0.45);
 
   room.puck = {
-    x: hitPoint.x + nx * (separation + 2),
-    y: hitPoint.y + ny * (separation + 2),
+    x: player.mallet.x + nx * (minDistance + 1),
+    y: player.mallet.y + ny * (minDistance + 1),
   };
 
   room.puckVelocity = {
@@ -355,24 +314,7 @@ function applyMalletCollision(
   };
 
   room.status = label === "PLAYER1" ? "PLAYER1ヒット" : "PLAYER2ヒット";
-}
-
-function collideSweep(
-  room: RoomState,
-  player: PlayerSlot,
-  label: "PLAYER1" | "PLAYER2"
-) {
-  const radius = PUCK_RADIUS + MALLET_RADIUS + COLLISION_BONUS;
-  const closest = closestPointOnSegment(player.prevMallet, player.mallet, room.puck);
-  const hitPoint = { x: closest.x, y: closest.y };
-
-  if (distance(hitPoint, room.puck) > radius) return;
-
-  applyMalletCollision(room, hitPoint, label);
-}
-
-function finalizePlayerSweep(player: PlayerSlot) {
-  player.prevMallet = cloneVec(player.mallet);
+  return true;
 }
 
 function stepRoom(room: RoomState) {
@@ -380,12 +322,11 @@ function stepRoom(room: RoomState) {
   if (!room.player1.connected || !room.player2.connected) return;
   if (room.winner) return;
 
-  const stepVX = room.puckVelocity.x / PHYSICS_SUBSTEPS;
-  const stepVY = room.puckVelocity.y / PHYSICS_SUBSTEPS;
+  let hitThisFrame = false;
 
   for (let i = 0; i < PHYSICS_SUBSTEPS; i++) {
-    room.puck.x += stepVX;
-    room.puck.y += stepVY;
+    room.puck.x += room.puckVelocity.x / PHYSICS_SUBSTEPS;
+    room.puck.y += room.puckVelocity.y / PHYSICS_SUBSTEPS;
 
     if (room.puck.x <= PUCK_RADIUS) {
       room.puck.x = PUCK_RADIUS;
@@ -415,9 +356,6 @@ function stepRoom(room: RoomState) {
         room.status = "PLAYER2ゴール";
         resetRound(room, 1);
       }
-
-      finalizePlayerSweep(room.player1);
-      finalizePlayerSweep(room.player2);
       return;
     }
 
@@ -431,9 +369,6 @@ function stepRoom(room: RoomState) {
         room.status = "PLAYER1ゴール";
         resetRound(room, 2);
       }
-
-      finalizePlayerSweep(room.player1);
-      finalizePlayerSweep(room.player2);
       return;
     }
 
@@ -447,8 +382,17 @@ function stepRoom(room: RoomState) {
       room.puckVelocity.y = -Math.abs(room.puckVelocity.y);
     }
 
-    collideSweep(room, room.player1, "PLAYER1");
-    collideSweep(room, room.player2, "PLAYER2");
+    if (!hitThisFrame) {
+      if (collide(room, room.player1, "PLAYER1")) {
+        hitThisFrame = true;
+        continue;
+      }
+
+      if (collide(room, room.player2, "PLAYER2")) {
+        hitThisFrame = true;
+        continue;
+      }
+    }
   }
 
   room.puckVelocity.x *= 0.998;
@@ -462,10 +406,7 @@ function stepRoom(room: RoomState) {
     room.puckVelocity.y = 0;
   }
 
-  room.status = room.status.includes("ヒット") ? room.status : "プレイ中";
-
-  finalizePlayerSweep(room.player1);
-  finalizePlayerSweep(room.player2);
+  room.status = hitThisFrame ? room.status : "プレイ中";
 }
 
 app.get("/health", async () => {
