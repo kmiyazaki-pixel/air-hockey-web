@@ -7,9 +7,10 @@ import { screenToWorld, worldToScreen } from "./utils/projection";
 import { useAirHockeyGame, type CpuDifficulty } from "./hooks/useAirHockeyGame";
 import { useOnlineGame } from "./hooks/useOnlineGame";
 import {
-  addCpuRankingEntry,
+  fetchCpuRanking,
+  submitCpuRanking,
   formatTimeMs,
-  loadCpuRanking,
+  type CpuRankingEntry,
 } from "./utils/cpuRanking";
 
 type Mode = "title" | "cpu" | "online";
@@ -23,7 +24,13 @@ function App() {
   const cpuGame = useAirHockeyGame(difficulty);
   const onlineGame = useOnlineGame();
 
-  const [rankingStore, setRankingStore] = useState(loadCpuRanking());
+  const [rankingStore, setRankingStore] = useState<
+    Record<CpuDifficulty, CpuRankingEntry[]>
+  >({
+    easy: [],
+    normal: [],
+    hard: [],
+  });
   const [rankingSubmitted, setRankingSubmitted] = useState(false);
 
   const pendingOnlineMoveRef = useRef<{ x: number; y: number } | null>(null);
@@ -39,32 +46,69 @@ function App() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+
+    const run = async () => {
+      try {
+        const items = await fetchCpuRanking(difficulty);
+        if (cancelled) return;
+
+        setRankingStore((prev) => ({
+          ...prev,
+          [difficulty]: items,
+        }));
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    run();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [difficulty]);
+
+  useEffect(() => {
     if (mode !== "cpu") return;
     if (cpuGame.winner !== "PLAYER") return;
     if (cpuGame.clearTimeMs == null) return;
     if (rankingSubmitted) return;
 
-    const defaultName = "NO NAME";
-    const inputName = window.prompt(
-      `クリアタイム: ${formatTimeMs(
-        cpuGame.clearTimeMs
-      )}\nランキングに登録する名前を入力してください`,
-      defaultName
-    );
+    const run = async () => {
+      const defaultName = "NO NAME";
+      const inputName = window.prompt(
+        `クリアタイム: ${formatTimeMs(
+          cpuGame.clearTimeMs
+        )}\nランキングに登録する名前を入力してください`,
+        defaultName
+      );
 
-    if (inputName === null) {
-      setRankingSubmitted(true);
-      return;
-    }
+      if (inputName === null) {
+        setRankingSubmitted(true);
+        return;
+      }
 
-    const nextStore = addCpuRankingEntry(
-      cpuGame.difficulty,
-      inputName,
-      cpuGame.clearTimeMs
-    );
+      try {
+        const items = await submitCpuRanking(
+          cpuGame.difficulty,
+          inputName,
+          cpuGame.clearTimeMs
+        );
 
-    setRankingStore(nextStore);
-    setRankingSubmitted(true);
+        setRankingStore((prev) => ({
+          ...prev,
+          [cpuGame.difficulty]: items,
+        }));
+      } catch (error) {
+        console.error(error);
+        window.alert("ランキング送信に失敗しました。");
+      } finally {
+        setRankingSubmitted(true);
+      }
+    };
+
+    run();
   }, [
     mode,
     cpuGame.winner,
@@ -207,26 +251,28 @@ function App() {
           {rankingStore[cpuGame.difficulty].length === 0 ? (
             <div style={{ opacity: 0.7 }}>まだ記録がありません</div>
           ) : (
-            rankingStore[cpuGame.difficulty].map((entry, index) => (
-              <div
-                key={`${entry.name}-${entry.createdAt}`}
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "56px 1fr 120px",
-                  gap: 12,
-                  alignItems: "center",
-                  padding: "10px 12px",
-                  borderRadius: 12,
-                  background: "rgba(255,255,255,0.05)",
-                }}
-              >
-                <div>#{index + 1}</div>
-                <div>{entry.name}</div>
-                <div style={{ textAlign: "right" }}>
-                  {formatTimeMs(entry.timeMs)}
+            rankingStore[cpuGame.difficulty].map(
+              (entry: CpuRankingEntry, index: number) => (
+                <div
+                  key={`${entry.id}-${entry.createdAt}`}
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns: "56px 1fr 120px",
+                    gap: 12,
+                    alignItems: "center",
+                    padding: "10px 12px",
+                    borderRadius: 12,
+                    background: "rgba(255,255,255,0.05)",
+                  }}
+                >
+                  <div>#{index + 1}</div>
+                  <div>{entry.name}</div>
+                  <div style={{ textAlign: "right" }}>
+                    {formatTimeMs(entry.timeMs)}
+                  </div>
                 </div>
-              </div>
-            ))
+              )
+            )
           )}
         </div>
       </div>
