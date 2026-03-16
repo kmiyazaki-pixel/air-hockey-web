@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useAirHockeyGame, type CpuDifficulty } from "./hooks/useAirHockeyGame";
 import { TitleScreen } from "./components/TitleScreen";
-import { GameBoard } from "./components/GameBoard";
-import { ScorePanel } from "./components/ScorePanel";
+import GameBoard from "./components/GameBoard";
+import ScorePanel from "./components/ScorePanel";
 
 type Mode = "title" | "cpu" | "online";
 
@@ -56,9 +56,19 @@ export default function App() {
   }
 
   return (
-    <main style={{ minHeight: "100vh", display: "grid", placeItems: "center" }}>
-      <button onClick={() => setMode("title")}>戻る</button>
-      <div>オンライン画面は既存のまま使ってください</div>
+    <main
+      style={{
+        minHeight: "100vh",
+        display: "grid",
+        placeItems: "center",
+        background: "#0b1020",
+        color: "#fff",
+      }}
+    >
+      <div style={{ textAlign: "center" }}>
+        <p style={{ marginBottom: 16 }}>オンライン画面は既存の実装を使ってください</p>
+        <button onClick={() => setMode("title")}>戻る</button>
+      </div>
     </main>
   );
 }
