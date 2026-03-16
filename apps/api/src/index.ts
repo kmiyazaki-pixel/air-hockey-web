@@ -3,7 +3,7 @@ import { WebSocketServer, WebSocket } from "ws";
 
 const PORT = Number(process.env.PORT ?? 4000);
 const STEP_RATE = 1000 / 60;
-const BROADCAST_RATE = 1000 / 30;
+const BROADCAST_RATE = 1000 / 40;
 
 const WORLD_WIDTH = 1000;
 const WORLD_HEIGHT = 1600;
