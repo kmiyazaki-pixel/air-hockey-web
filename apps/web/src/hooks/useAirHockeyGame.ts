@@ -154,6 +154,7 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
   const [winner, setWinner] = useState<Winner>(null);
   const [started, setStarted] = useState(false);
   const [status, setStatus] = useState("READY");
+  const [clearTimeMs, setClearTimeMs] = useState<number | null>(null);
 
   const playerRef = useRef<Vec2>(INITIAL_PLAYER);
   const prevPlayerRef = useRef<Vec2>(INITIAL_PLAYER);
@@ -161,6 +162,7 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
   const prevCpuRef = useRef<Vec2>(INITIAL_CPU);
   const puckRef = useRef<Vec2>(INITIAL_PUCK);
   const puckVelocityRef = useRef<Vec2>(resetPuckDirection(true));
+  const startedAtRef = useRef<number | null>(null);
 
   const animationRef = useRef<number | null>(null);
   const difficultyRef = useRef<DifficultyConfig>(DIFFICULTY_CONFIG[difficulty]);
@@ -199,6 +201,8 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
   const startGame = useCallback(() => {
     setStarted(true);
     setWinner(null);
+    setClearTimeMs(null);
+    startedAtRef.current = performance.now();
     setStatus(`CPU: ${difficulty.toUpperCase()}`);
     resetPositionsOnly(true);
   }, [difficulty, resetPositionsOnly]);
@@ -208,6 +212,8 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
     setCpuScore(0);
     setWinner(null);
     setStarted(true);
+    setClearTimeMs(null);
+    startedAtRef.current = performance.now();
     setStatus(`CPU: ${difficulty.toUpperCase()}`);
     resetPositionsOnly(true);
   }, [difficulty, resetPositionsOnly]);
@@ -218,6 +224,8 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
     setStatus("READY");
     setPlayerScore(0);
     setCpuScore(0);
+    setClearTimeMs(null);
+    startedAtRef.current = null;
     prevPlayerRef.current = INITIAL_PLAYER;
     prevCpuRef.current = INITIAL_CPU;
     syncPlayer(INITIAL_PLAYER);
@@ -280,6 +288,9 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
             if (next >= WIN_SCORE) {
               setWinner("PLAYER");
               setStatus("あなたの勝ち！");
+              if (startedAtRef.current !== null) {
+                setClearTimeMs(performance.now() - startedAtRef.current);
+              }
             } else {
               setStatus(`CPU: ${difficulty.toUpperCase()}`);
             }
@@ -441,6 +452,7 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
     statusText,
     winScore: WIN_SCORE,
     difficulty,
+    clearTimeMs,
     startGame,
     restart,
     backToTitle,
