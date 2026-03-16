@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { CSSProperties, PointerEvent } from "react";
+import type { CSSProperties, MouseEvent } from "react";
 import GameBoard from "./components/GameBoard";
 import ScorePanel from "./components/ScorePanel";
 import TitleScreen from "./components/TitleScreen";
@@ -89,7 +89,7 @@ function App() {
     );
   };
 
-  const handleCpuMove = (event: PointerEvent<HTMLDivElement>) => {
+  const handleCpuMove = (event: MouseEvent<HTMLDivElement>) => {
     if (cpuGame.winner) return;
 
     const rect = event.currentTarget.getBoundingClientRect();
@@ -102,7 +102,7 @@ function App() {
     cpuGame.updatePlayerFromWorld(worldX, worldY);
   };
 
-  const handleOnlineMove = (event: PointerEvent<HTMLDivElement>) => {
+  const handleOnlineMove = (event: MouseEvent<HTMLDivElement>) => {
     if (!onlineGame.playerNumber) return;
 
     const rect = event.currentTarget.getBoundingClientRect();
@@ -189,7 +189,7 @@ function App() {
         winner={cpuGame.winner}
         status={cpuGame.status}
         winScore={cpuGame.winScore}
-        onPointerMove={handleCpuMove}
+        onMouseMove={handleCpuMove}
         onBack={() => {
           cpuGame.backToTitle();
           backToTitle();
@@ -310,7 +310,7 @@ function App() {
           winner={onlineGame.viewState.winner}
           status={onlineGame.roomState.status}
           winScore={5}
-          onPointerMove={handleOnlineMove}
+          onMouseMove={handleOnlineMove}
           onBack={backToTitle}
           onRestart={onlineGame.restart}
           cpuScreen={onlineOpponentScreen}
