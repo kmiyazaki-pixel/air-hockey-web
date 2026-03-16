@@ -1,77 +1,66 @@
 export type CpuDifficulty = "easy" | "normal" | "hard";
 
 export type CpuRankingEntry = {
+  id: number;
   name: string;
+  difficulty: CpuDifficulty;
   timeMs: number;
-  createdAt: number;
+  createdAt: string;
 };
 
-type CpuRankingStore = Record<CpuDifficulty, CpuRankingEntry[]>;
+type CpuRankingResponse = {
+  difficulty: CpuDifficulty;
+  items: CpuRankingEntry[];
+};
 
-const STORAGE_KEY = "air-hockey-cpu-ranking";
-const MAX_ENTRIES = 10;
+function getApiBaseUrl() {
+  const envUrl = import.meta.env.VITE_API_URL as string | undefined;
+  if (envUrl) return envUrl.replace(/\/$/, "");
 
-const emptyStore = (): CpuRankingStore => ({
-  easy: [],
-  normal: [],
-  hard: [],
-});
+  const host = window.location.hostname;
+  return `https://${host}`;
+}
 
-function isValidEntry(value: unknown): value is CpuRankingEntry {
-  if (!value || typeof value !== "object") return false;
-  const entry = value as CpuRankingEntry;
-  return (
-    typeof entry.name === "string" &&
-    typeof entry.timeMs === "number" &&
-    typeof entry.createdAt === "number"
+export async function fetchCpuRanking(
+  difficulty: CpuDifficulty
+): Promise<CpuRankingEntry[]> {
+  const response = await fetch(
+    `${getApiBaseUrl()}/rankings/cpu?difficulty=${difficulty}`
   );
-}
 
-export function loadCpuRanking(): CpuRankingStore {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return emptyStore();
-
-    const parsed = JSON.parse(raw) as Partial<CpuRankingStore>;
-    return {
-      easy: Array.isArray(parsed.easy) ? parsed.easy.filter(isValidEntry) : [],
-      normal: Array.isArray(parsed.normal) ? parsed.normal.filter(isValidEntry) : [],
-      hard: Array.isArray(parsed.hard) ? parsed.hard.filter(isValidEntry) : [],
-    };
-  } catch {
-    return emptyStore();
+  if (!response.ok) {
+    throw new Error("ランキング取得に失敗しました。");
   }
+
+  const data = (await response.json()) as CpuRankingResponse;
+  return data.items;
 }
 
-export function saveCpuRanking(store: CpuRankingStore) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(store));
-}
-
-export function addCpuRankingEntry(
+export async function submitCpuRanking(
   difficulty: CpuDifficulty,
   name: string,
   timeMs: number
-): CpuRankingStore {
-  const store = loadCpuRanking();
+): Promise<CpuRankingEntry[]> {
   const trimmedName = name.trim().slice(0, 20) || "NO NAME";
 
-  const nextEntry: CpuRankingEntry = {
-    name: trimmedName,
-    timeMs,
-    createdAt: Date.now(),
-  };
+  const response = await fetch(`${getApiBaseUrl()}/rankings/cpu`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: trimmedName,
+      difficulty,
+      timeMs,
+    }),
+  });
 
-  const nextList = [...store[difficulty], nextEntry]
-    .sort((a, b) => a.timeMs - b.timeMs)
-    .slice(0, MAX_ENTRIES);
+  if (!response.ok) {
+    throw new Error("ランキング送信に失敗しました。");
+  }
 
-  const nextStore: CpuRankingStore = {
-    ...store,
-    [difficulty]: nextList,
-  };
-
-  saveCpuRanking(nextStore);
-  return nextStore;
+  const data = (await response.json()) as CpuRankingResponse;
+  return data.items;
 }
 
 export function formatTimeMs(timeMs: number) {
