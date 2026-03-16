@@ -20,8 +20,8 @@ const MALLET_RADIUS = 58;
 const BOARD_PADDING = 70;
 const GOAL_WIDTH = 320;
 const WIN_SCORE = 5;
-const MAX_PUCK_SPEED = 16;
-const FRICTION = 0.995;
+const MAX_PUCK_SPEED = 21;
+const FRICTION = 0.9975;
 
 const INITIAL_PLAYER: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 230 };
 const INITIAL_CPU: Vec2 = { x: WORLD_WIDTH / 2, y: 230 };
@@ -96,18 +96,14 @@ function clampCpuWorld(pos: Vec2): Vec2 {
       BOARD_PADDING + MALLET_RADIUS,
       WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS
     ),
-    y: clamp(
-      pos.y,
-      BOARD_PADDING + MALLET_RADIUS,
-      WORLD_HEIGHT * 0.48
-    ),
+    y: clamp(pos.y, BOARD_PADDING + MALLET_RADIUS, WORLD_HEIGHT * 0.48),
   };
 }
 
 function resetPuckDirection(towardPlayer: boolean) {
   return {
-    x: (Math.random() - 0.5) * 6,
-    y: towardPlayer ? 6.4 : -6.4,
+    x: (Math.random() - 0.5) * 8,
+    y: towardPlayer ? 8.6 : -8.6,
   };
 }
 
@@ -136,10 +132,7 @@ function resolveMalletCollision(
 
   const pushedPuck = add(mallet, mul(normal, minDist + 1));
 
-  let nextVelocity = add(
-    puckVelocity,
-    mul(malletVelocity, 0.55)
-  );
+  let nextVelocity = add(puckVelocity, mul(malletVelocity, 0.55));
 
   const alongNormal = nextVelocity.x * normal.x + nextVelocity.y * normal.y;
   if (alongNormal < 5.5) {
@@ -263,7 +256,6 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
       const currentPuck = puckRef.current;
 
       const playerVelocity = sub(currentPlayer, prevPlayerRef.current);
-      const cpuVelocityPrev = sub(currentCpu, prevCpuRef.current);
 
       let nextPuck = add(currentPuck, puckVelocityRef.current);
       let nextVelocity = { ...puckVelocityRef.current };
