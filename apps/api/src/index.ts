@@ -22,7 +22,7 @@ const PLAYER2_MAX_Y = WORLD_HEIGHT - 40;
 const PHYSICS_SUBSTEPS = 8;
 const MAX_MALLET_STEP = 80;
 const HIT_PUSHOUT = 2;
-const MAX_PUCK_SPEED = 11.5;
+const MAX_PUCK_SPEED = 12.5;
 
 type Vec2 = { x: number; y: number };
 type PlayerNumber = 1 | 2;
@@ -90,6 +90,40 @@ function cloneVec(v: Vec2): Vec2 {
   return { x: v.x, y: v.y };
 }
 
+function addVec(a: Vec2, b: Vec2): Vec2 {
+  return { x: a.x + b.x, y: a.y + b.y };
+}
+
+function subVec(a: Vec2, b: Vec2): Vec2 {
+  return { x: a.x - b.x, y: a.y - b.y };
+}
+
+function mulVec(v: Vec2, s: number): Vec2 {
+  return { x: v.x * s, y: v.y * s };
+}
+
+function dot(a: Vec2, b: Vec2) {
+  return a.x * b.x + a.y * b.y;
+}
+
+function length(x: number, y: number) {
+  return Math.hypot(x, y);
+}
+
+function lengthVec(v: Vec2) {
+  return Math.hypot(v.x, v.y);
+}
+
+function normalize(x: number, y: number) {
+  const d = Math.hypot(x, y) || 1;
+  return { x: x / d, y: y / d };
+}
+
+function normalizeVec(v: Vec2) {
+  const d = Math.hypot(v.x, v.y) || 1;
+  return { x: v.x / d, y: v.y / d };
+}
+
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
@@ -99,15 +133,6 @@ function lerpVec(a: Vec2, b: Vec2, t: number): Vec2 {
     x: lerp(a.x, b.x, t),
     y: lerp(a.y, b.y, t),
   };
-}
-
-function length(x: number, y: number) {
-  return Math.hypot(x, y);
-}
-
-function normalize(x: number, y: number) {
-  const d = Math.hypot(x, y) || 1;
-  return { x: x / d, y: y / d };
 }
 
 function clampMove(prev: Vec2, next: Vec2, maxStep: number): Vec2 {
@@ -343,29 +368,50 @@ function handleMove(socket: WebSocket, x: number, y: number) {
   slot.mallet = clampMove(slot.mallet, clamped, MAX_MALLET_STEP);
 }
 
-function collideWithMallet(room: RoomState, malletPos: Vec2, label: "PLAYER1" | "PLAYER2") {
-  const dx = room.puck.x - malletPos.x;
-  const dy = room.puck.y - malletPos.y;
-  const dist = Math.hypot(dx, dy);
+function resolveHit(room: RoomState, malletPos: Vec2, malletVel: Vec2, label: "PLAYER1" | "PLAYER2") {
+  const offset = subVec(room.puck, malletPos);
+  const offsetLen = lengthVec(offset);
   const minDistance = PUCK_RADIUS + MALLET_RADIUS;
 
-  if (dist >= minDistance) return false;
+  if (offsetLen >= minDistance) return false;
 
-  const n = normalize(dx, dy);
+  const normal =
+    offsetLen > 0.0001
+      ? normalizeVec(offset)
+      : label === "PLAYER1"
+        ? { x: 0, y: 1 }
+        : { x: 0, y: -1 };
 
-  room.puck = {
-    x: malletPos.x + n.x * (minDistance + HIT_PUSHOUT),
-    y: malletPos.y + n.y * (minDistance + HIT_PUSHOUT),
-  };
+  room.puck = addVec(malletPos, mulVec(normal, minDistance + HIT_PUSHOUT));
 
-  const currentSpeed = length(room.puckVelocity.x, room.puckVelocity.y);
-  const nextSpeed = Math.min(MAX_PUCK_SPEED, Math.max(6.8, currentSpeed + 0.35));
+  const malletSpeed = lengthVec(malletVel);
+  const hitStrength = Math.min(6.0, malletSpeed * 0.42);
 
-  room.puckVelocity = {
-    x: n.x * nextSpeed,
-    y: n.y * nextSpeed,
-  };
+  let nextVelocity = addVec(
+    room.puckVelocity,
+    mulVec(malletVel, 0.48 + Math.min(0.22, malletSpeed * 0.01))
+  );
 
+  const away = dot(nextVelocity, normal);
+  if (away < 3.2) {
+    nextVelocity = addVec(nextVelocity, mulVec(normal, 3.2 - away));
+  }
+
+  const totalSpeed = lengthVec(nextVelocity);
+  if (totalSpeed < 5.6) {
+    nextVelocity = mulVec(normalizeVec(nextVelocity), 5.6);
+  } else if (totalSpeed > MAX_PUCK_SPEED) {
+    nextVelocity = mulVec(normalizeVec(nextVelocity), MAX_PUCK_SPEED);
+  }
+
+  nextVelocity = addVec(nextVelocity, mulVec(normal, hitStrength * 0.18));
+
+  const finalSpeed = lengthVec(nextVelocity);
+  if (finalSpeed > MAX_PUCK_SPEED) {
+    nextVelocity = mulVec(normalizeVec(nextVelocity), MAX_PUCK_SPEED);
+  }
+
+  room.puckVelocity = nextVelocity;
   room.status = label === "PLAYER1" ? "PLAYER1ヒット" : "PLAYER2ヒット";
   return true;
 }
@@ -390,9 +436,16 @@ function stepRoom(room: RoomState) {
   let hitThisFrame = false;
 
   for (let i = 1; i <= PHYSICS_SUBSTEPS; i++) {
-    const t = i / PHYSICS_SUBSTEPS;
-    const p1 = lerpVec(room.player1.prevMallet, room.player1.mallet, t);
-    const p2 = lerpVec(room.player2.prevMallet, room.player2.mallet, t);
+    const prevT = (i - 1) / PHYSICS_SUBSTEPS;
+    const currT = i / PHYSICS_SUBSTEPS;
+
+    const p1Prev = lerpVec(room.player1.prevMallet, room.player1.mallet, prevT);
+    const p1Curr = lerpVec(room.player1.prevMallet, room.player1.mallet, currT);
+    const p2Prev = lerpVec(room.player2.prevMallet, room.player2.mallet, prevT);
+    const p2Curr = lerpVec(room.player2.prevMallet, room.player2.mallet, currT);
+
+    const p1Vel = subVec(p1Curr, p1Prev);
+    const p2Vel = subVec(p2Curr, p2Prev);
 
     room.puck.x += room.puckVelocity.x / PHYSICS_SUBSTEPS;
     room.puck.y += room.puckVelocity.y / PHYSICS_SUBSTEPS;
@@ -456,23 +509,23 @@ function stepRoom(room: RoomState) {
     }
 
     if (!hitThisFrame) {
-      if (collideWithMallet(room, p1, "PLAYER1")) {
+      if (resolveHit(room, p1Curr, p1Vel, "PLAYER1")) {
         hitThisFrame = true;
         continue;
       }
 
-      if (collideWithMallet(room, p2, "PLAYER2")) {
+      if (resolveHit(room, p2Curr, p2Vel, "PLAYER2")) {
         hitThisFrame = true;
         continue;
       }
     }
   }
 
-  room.puckVelocity.x *= 0.998;
-  room.puckVelocity.y *= 0.998;
+  room.puckVelocity.x *= 0.9992;
+  room.puckVelocity.y *= 0.9992;
 
-  if (Math.abs(room.puckVelocity.x) < 0.08) room.puckVelocity.x = 0;
-  if (Math.abs(room.puckVelocity.y) < 0.08) room.puckVelocity.y = 0;
+  if (Math.abs(room.puckVelocity.x) < 0.04) room.puckVelocity.x = 0;
+  if (Math.abs(room.puckVelocity.y) < 0.04) room.puckVelocity.y = 0;
 
   room.status = hitThisFrame ? room.status : "プレイ中";
 
