@@ -27,6 +27,7 @@ type PlayerNumber = 1 | 2;
 type Winner = "PLAYER1" | "PLAYER2" | null;
 
 type ClientMessage =
+  | { type: "create_room"; roomId: string }
   | { type: "join_room"; roomId: string }
   | { type: "move"; x: number; y: number }
   | { type: "restart" };
@@ -82,10 +83,6 @@ function isValidRoomId(roomId: string) {
   return /^\d{4}$/.test(roomId);
 }
 
-function cloneVec(v: Vec2): Vec2 {
-  return { x: v.x, y: v.y };
-}
-
 function clampMove(prev: Vec2, next: Vec2, maxStep: number): Vec2 {
   const dx = next.x - prev.x;
   const dy = next.y - prev.y;
@@ -112,6 +109,17 @@ function makeInitialRoom(id: string): RoomState {
     status: "待機中",
     winner: null,
   };
+}
+
+function ensureRoom(roomId: string) {
+  let room = rooms.get(roomId);
+
+  if (!room) {
+    room = makeInitialRoom(roomId);
+    rooms.set(roomId, room);
+  }
+
+  return room;
 }
 
 function resetRound(room: RoomState, toward: PlayerNumber) {
@@ -198,17 +206,6 @@ function removeSocket(socket: WebSocket) {
   }
 }
 
-function ensureRoom(roomId: string) {
-  let room = rooms.get(roomId);
-
-  if (!room) {
-    room = makeInitialRoom(roomId);
-    rooms.set(roomId, room);
-  }
-
-  return room;
-}
-
 function attachPlayer(
   room: RoomState,
   socket: WebSocket,
@@ -239,6 +236,29 @@ function attachPlayer(
   broadcastRoom(room);
 }
 
+function handleCreateRoom(socket: WebSocket, roomIdRaw: string) {
+  const roomId = roomIdRaw.trim();
+
+  if (!isValidRoomId(roomId)) {
+    send(socket, {
+      type: "error",
+      message: "4桁の数字を入力してください。",
+    });
+    return;
+  }
+
+  if (rooms.has(roomId)) {
+    send(socket, {
+      type: "error",
+      message: "そのルームはすでに存在します。",
+    });
+    return;
+  }
+
+  const room = ensureRoom(roomId);
+  attachPlayer(room, socket, 1);
+}
+
 function handleJoinRoom(socket: WebSocket, roomIdRaw: string) {
   const roomId = roomIdRaw.trim();
 
@@ -250,7 +270,15 @@ function handleJoinRoom(socket: WebSocket, roomIdRaw: string) {
     return;
   }
 
-  const room = ensureRoom(roomId);
+  const room = rooms.get(roomId);
+
+  if (!room) {
+    send(socket, {
+      type: "error",
+      message: "そのルームは存在しません。先に作成してください。",
+    });
+    return;
+  }
 
   if (!room.player1 || !room.player1.connected) {
     attachPlayer(room, socket, 1);
@@ -432,6 +460,11 @@ app.listen({ port: PORT, host: "0.0.0.0" }, (err) => {
     socket.on("message", (raw: string | Buffer) => {
       try {
         const message = JSON.parse(String(raw)) as ClientMessage;
+
+        if (message.type === "create_room") {
+          handleCreateRoom(socket, message.roomId);
+          return;
+        }
 
         if (message.type === "join_room") {
           handleJoinRoom(socket, message.roomId);
