@@ -1,3 +1,4 @@
+import type { PointerEvent } from "react";
 import Mallet from "./Mallet";
 import Puck from "./Puck";
 import {
@@ -21,7 +22,7 @@ type GameBoardProps = {
   winner: "PLAYER" | "CPU" | null;
   status: string;
   winScore: number;
-  onMouseMove: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onPointerMove: (event: PointerEvent<HTMLDivElement>) => void;
   onBack: () => void;
   onRestart: () => void;
   cpuScreen: ScreenObject;
@@ -33,7 +34,7 @@ function GameBoard({
   winner,
   status,
   winScore,
-  onMouseMove,
+  onPointerMove,
   onBack,
   onRestart,
   cpuScreen,
@@ -95,7 +96,9 @@ function GameBoard({
       </div>
 
       <div
-        onMouseMove={onMouseMove}
+        onPointerMove={onPointerMove}
+        onPointerDown={onPointerMove}
+        onPointerEnter={onPointerMove}
         style={{
           width: VIEW_WIDTH,
           height: VIEW_HEIGHT,
@@ -103,6 +106,7 @@ function GameBoard({
           position: "relative",
           cursor: winner ? "default" : "crosshair",
           userSelect: "none",
+          touchAction: "none",
           transform: "scale(0.92)",
           transformOrigin: "top center",
         }}
