@@ -10,8 +10,8 @@ const WORLD_HEIGHT = 1600;
 const GOAL_WIDTH = 320;
 const PUCK_RADIUS = 22;
 const MALLET_RADIUS = 58;
-const COLLISION_BONUS = 8;
 const WIN_SCORE = 5;
+
 const TABLE_MIN_X = 70;
 const TABLE_MAX_X = WORLD_WIDTH - 70;
 const PLAYER1_MIN_Y = 120;
@@ -19,8 +19,10 @@ const PLAYER1_MAX_Y = WORLD_HEIGHT * 0.38;
 const PLAYER2_MIN_Y = WORLD_HEIGHT * 0.5 + 40;
 const PLAYER2_MAX_Y = WORLD_HEIGHT - 40;
 
-const PHYSICS_SUBSTEPS = 6;
-const MAX_MALLET_STEP = 70;
+const PHYSICS_SUBSTEPS = 8;
+const MAX_MALLET_STEP = 80;
+const HIT_PUSHOUT = 2;
+const MAX_PUCK_SPEED = 11.5;
 
 type Vec2 = { x: number; y: number };
 type PlayerNumber = 1 | 2;
@@ -53,6 +55,7 @@ type RoomSnapshot = {
 type PlayerSlot = {
   socket: WebSocket;
   mallet: Vec2;
+  prevMallet: Vec2;
   connected: boolean;
 };
 
@@ -81,6 +84,30 @@ function clamp(value: number, min: number, max: number) {
 
 function isValidRoomId(roomId: string) {
   return /^\d{4}$/.test(roomId);
+}
+
+function cloneVec(v: Vec2): Vec2 {
+  return { x: v.x, y: v.y };
+}
+
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
+}
+
+function lerpVec(a: Vec2, b: Vec2, t: number): Vec2 {
+  return {
+    x: lerp(a.x, b.x, t),
+    y: lerp(a.y, b.y, t),
+  };
+}
+
+function length(x: number, y: number) {
+  return Math.hypot(x, y);
+}
+
+function normalize(x: number, y: number) {
+  const d = Math.hypot(x, y) || 1;
+  return { x: x / d, y: y / d };
 }
 
 function clampMove(prev: Vec2, next: Vec2, maxStep: number): Vec2 {
@@ -130,6 +157,11 @@ function resetRound(room: RoomState, toward: PlayerNumber) {
   };
 }
 
+function setPlayerPosition(slot: PlayerSlot, pos: Vec2) {
+  slot.mallet = cloneVec(pos);
+  slot.prevMallet = cloneVec(pos);
+}
+
 function resetMatch(room: RoomState) {
   room.player1Score = 0;
   room.player2Score = 0;
@@ -137,11 +169,11 @@ function resetMatch(room: RoomState) {
   room.status = room.player1 && room.player2 ? "プレイ中" : "待機中";
 
   if (room.player1) {
-    room.player1.mallet = { x: 500, y: 210 };
+    setPlayerPosition(room.player1, { x: 500, y: 210 });
   }
 
   if (room.player2) {
-    room.player2.mallet = { x: 500, y: 1350 };
+    setPlayerPosition(room.player2, { x: 500, y: 1350 });
   }
 
   resetRound(room, 2);
@@ -211,10 +243,13 @@ function attachPlayer(
   socket: WebSocket,
   playerNumber: PlayerNumber
 ) {
+  const initial = playerNumber === 1 ? { x: 500, y: 210 } : { x: 500, y: 1350 };
+
   const slot: PlayerSlot = {
     socket,
     connected: true,
-    mallet: playerNumber === 1 ? { x: 500, y: 210 } : { x: 500, y: 1350 },
+    mallet: cloneVec(initial),
+    prevMallet: cloneVec(initial),
   };
 
   if (playerNumber === 1) {
@@ -240,18 +275,12 @@ function handleCreateRoom(socket: WebSocket, roomIdRaw: string) {
   const roomId = roomIdRaw.trim();
 
   if (!isValidRoomId(roomId)) {
-    send(socket, {
-      type: "error",
-      message: "4桁の数字を入力してください。",
-    });
+    send(socket, { type: "error", message: "4桁の数字を入力してください。" });
     return;
   }
 
   if (rooms.has(roomId)) {
-    send(socket, {
-      type: "error",
-      message: "そのルームはすでに存在します。",
-    });
+    send(socket, { type: "error", message: "そのルームはすでに存在します。" });
     return;
   }
 
@@ -263,10 +292,7 @@ function handleJoinRoom(socket: WebSocket, roomIdRaw: string) {
   const roomId = roomIdRaw.trim();
 
   if (!isValidRoomId(roomId)) {
-    send(socket, {
-      type: "error",
-      message: "4桁の数字を入力してください。",
-    });
+    send(socket, { type: "error", message: "4桁の数字を入力してください。" });
     return;
   }
 
@@ -317,32 +343,41 @@ function handleMove(socket: WebSocket, x: number, y: number) {
   slot.mallet = clampMove(slot.mallet, clamped, MAX_MALLET_STEP);
 }
 
-function collide(room: RoomState, player: PlayerSlot, label: "PLAYER1" | "PLAYER2") {
-  const dx = room.puck.x - player.mallet.x;
-  const dy = room.puck.y - player.mallet.y;
+function collideWithMallet(room: RoomState, malletPos: Vec2, label: "PLAYER1" | "PLAYER2") {
+  const dx = room.puck.x - malletPos.x;
+  const dy = room.puck.y - malletPos.y;
   const dist = Math.hypot(dx, dy);
-  const minDistance = PUCK_RADIUS + MALLET_RADIUS + COLLISION_BONUS;
+  const minDistance = PUCK_RADIUS + MALLET_RADIUS;
 
   if (dist >= minDistance) return false;
 
-  const nx = dx / (dist || 1);
-  const ny = dy / (dist || 1);
-
-  const currentSpeed = Math.hypot(room.puckVelocity.x, room.puckVelocity.y);
-  const nextSpeed = Math.min(11.5, currentSpeed + 0.45);
+  const n = normalize(dx, dy);
 
   room.puck = {
-    x: player.mallet.x + nx * (minDistance + 1),
-    y: player.mallet.y + ny * (minDistance + 1),
+    x: malletPos.x + n.x * (minDistance + HIT_PUSHOUT),
+    y: malletPos.y + n.y * (minDistance + HIT_PUSHOUT),
   };
 
+  const currentSpeed = length(room.puckVelocity.x, room.puckVelocity.y);
+  const nextSpeed = Math.min(MAX_PUCK_SPEED, Math.max(6.8, currentSpeed + 0.35));
+
   room.puckVelocity = {
-    x: nx * nextSpeed,
-    y: ny * nextSpeed,
+    x: n.x * nextSpeed,
+    y: n.y * nextSpeed,
   };
 
   room.status = label === "PLAYER1" ? "PLAYER1ヒット" : "PLAYER2ヒット";
   return true;
+}
+
+function beginPhysicsFrame(room: RoomState) {
+  if (room.player1) room.player1.prevMallet = cloneVec(room.player1.mallet);
+  if (room.player2) room.player2.prevMallet = cloneVec(room.player2.mallet);
+}
+
+function endPhysicsFrame(room: RoomState) {
+  if (room.player1) room.player1.prevMallet = cloneVec(room.player1.mallet);
+  if (room.player2) room.player2.prevMallet = cloneVec(room.player2.mallet);
 }
 
 function stepRoom(room: RoomState) {
@@ -350,9 +385,15 @@ function stepRoom(room: RoomState) {
   if (!room.player1.connected || !room.player2.connected) return;
   if (room.winner) return;
 
+  beginPhysicsFrame(room);
+
   let hitThisFrame = false;
 
-  for (let i = 0; i < PHYSICS_SUBSTEPS; i++) {
+  for (let i = 1; i <= PHYSICS_SUBSTEPS; i++) {
+    const t = i / PHYSICS_SUBSTEPS;
+    const p1 = lerpVec(room.player1.prevMallet, room.player1.mallet, t);
+    const p2 = lerpVec(room.player2.prevMallet, room.player2.mallet, t);
+
     room.puck.x += room.puckVelocity.x / PHYSICS_SUBSTEPS;
     room.puck.y += room.puckVelocity.y / PHYSICS_SUBSTEPS;
 
@@ -384,6 +425,8 @@ function stepRoom(room: RoomState) {
         room.status = "PLAYER2ゴール";
         resetRound(room, 1);
       }
+
+      endPhysicsFrame(room);
       return;
     }
 
@@ -397,6 +440,8 @@ function stepRoom(room: RoomState) {
         room.status = "PLAYER1ゴール";
         resetRound(room, 2);
       }
+
+      endPhysicsFrame(room);
       return;
     }
 
@@ -411,12 +456,12 @@ function stepRoom(room: RoomState) {
     }
 
     if (!hitThisFrame) {
-      if (collide(room, room.player1, "PLAYER1")) {
+      if (collideWithMallet(room, p1, "PLAYER1")) {
         hitThisFrame = true;
         continue;
       }
 
-      if (collide(room, room.player2, "PLAYER2")) {
+      if (collideWithMallet(room, p2, "PLAYER2")) {
         hitThisFrame = true;
         continue;
       }
@@ -426,15 +471,12 @@ function stepRoom(room: RoomState) {
   room.puckVelocity.x *= 0.998;
   room.puckVelocity.y *= 0.998;
 
-  if (Math.abs(room.puckVelocity.x) < 0.08) {
-    room.puckVelocity.x = 0;
-  }
-
-  if (Math.abs(room.puckVelocity.y) < 0.08) {
-    room.puckVelocity.y = 0;
-  }
+  if (Math.abs(room.puckVelocity.x) < 0.08) room.puckVelocity.x = 0;
+  if (Math.abs(room.puckVelocity.y) < 0.08) room.puckVelocity.y = 0;
 
   room.status = hitThisFrame ? room.status : "プレイ中";
+
+  endPhysicsFrame(room);
 }
 
 app.get("/health", async () => {
