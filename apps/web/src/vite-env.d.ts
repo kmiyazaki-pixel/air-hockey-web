@@ -1,1 +1,1 @@
-An import path can only end with a '.tsx' extension
+/// <reference types="vite/client" />
