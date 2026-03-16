@@ -50,6 +50,8 @@ type RoomSnapshot = {
   player2: Vec2;
   player1Connected: boolean;
   player2Connected: boolean;
+  serverTime: number;
+  tick: number;
 };
 
 type PlayerSlot = {
@@ -69,6 +71,7 @@ type RoomState = {
   player2Score: number;
   status: string;
   winner: Winner;
+  tick: number;
 };
 
 const app = Fastify({ logger: true });
@@ -106,17 +109,8 @@ function dot(a: Vec2, b: Vec2) {
   return a.x * b.x + a.y * b.y;
 }
 
-function length(x: number, y: number) {
-  return Math.hypot(x, y);
-}
-
 function lengthVec(v: Vec2) {
   return Math.hypot(v.x, v.y);
-}
-
-function normalize(x: number, y: number) {
-  const d = Math.hypot(x, y) || 1;
-  return { x: x / d, y: y / d };
 }
 
 function normalizeVec(v: Vec2) {
@@ -160,6 +154,7 @@ function makeInitialRoom(id: string): RoomState {
     player2Score: 0,
     status: "待機中",
     winner: null,
+    tick: 0,
   };
 }
 
@@ -216,6 +211,8 @@ function roomSnapshot(room: RoomState): RoomSnapshot {
     player2: room.player2?.mallet ?? { x: 500, y: 1350 },
     player1Connected: Boolean(room.player1?.connected),
     player2Connected: Boolean(room.player2?.connected),
+    serverTime: Date.now(),
+    tick: room.tick,
   };
 }
 
@@ -368,7 +365,12 @@ function handleMove(socket: WebSocket, x: number, y: number) {
   slot.mallet = clampMove(slot.mallet, clamped, MAX_MALLET_STEP);
 }
 
-function resolveHit(room: RoomState, malletPos: Vec2, malletVel: Vec2, label: "PLAYER1" | "PLAYER2") {
+function resolveHit(
+  room: RoomState,
+  malletPos: Vec2,
+  malletVel: Vec2,
+  label: "PLAYER1" | "PLAYER2"
+) {
   const offset = subVec(room.puck, malletPos);
   const offsetLen = lengthVec(offset);
   const minDistance = PUCK_RADIUS + MALLET_RADIUS;
@@ -431,6 +433,7 @@ function stepRoom(room: RoomState) {
   if (!room.player1.connected || !room.player2.connected) return;
   if (room.winner) return;
 
+  room.tick += 1;
   beginPhysicsFrame(room);
 
   let hitThisFrame = false;
