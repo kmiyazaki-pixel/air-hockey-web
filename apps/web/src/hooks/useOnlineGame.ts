@@ -17,12 +17,19 @@ type RoomState = {
   player2: Vec2;
   player1Connected: boolean;
   player2Connected: boolean;
+  serverTime?: number;
+  tick?: number;
 };
 
 type ServerMessage =
   | { type: "joined"; roomId: string; playerNumber: PlayerNumber }
   | { type: "room_state"; state: RoomState }
   | { type: "error"; message: string };
+
+type TimedSnapshot = {
+  receivedAt: number;
+  state: RoomState;
+};
 
 const EMPTY_ROOM: RoomState = {
   roomId: "",
@@ -35,7 +42,12 @@ const EMPTY_ROOM: RoomState = {
   player2: { x: 500, y: 1350 },
   player1Connected: false,
   player2Connected: false,
+  serverTime: 0,
+  tick: 0,
 };
+
+const INTERPOLATION_DELAY_MS = 95;
+const MAX_BUFFER_SIZE = 8;
 
 function getWsUrl() {
   const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
@@ -68,11 +80,35 @@ function distance(a: Vec2, b: Vec2) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function interpolateRoomState(a: RoomState, b: RoomState, t: number): RoomState {
+  return {
+    ...b,
+    puck: lerpVec(a.puck, b.puck, t),
+    player1: lerpVec(a.player1, b.player1, t),
+    player2: lerpVec(a.player2, b.player2, t),
+  };
+}
+
+function shouldSnapImmediately(current: RoomState, next: RoomState) {
+  return (
+    current.roomId !== next.roomId ||
+    current.player1Score !== next.player1Score ||
+    current.player2Score !== next.player2Score ||
+    current.winner !== next.winner ||
+    current.status !== next.status
+  );
+}
+
 export function useOnlineGame() {
   const socketRef = useRef<WebSocket | null>(null);
+  const reconnectTimerRef = useRef<number | null>(null);
   const animationRef = useRef<number | null>(null);
-  const targetStateRef = useRef<RoomState>(EMPTY_ROOM);
+  const snapshotsRef = useRef<TimedSnapshot[]>([]);
+  const latestServerStateRef = useRef<RoomState>(EMPTY_ROOM);
+  const renderStateRef = useRef<RoomState>(EMPTY_ROOM);
   const playerNumberRef = useRef<PlayerNumber | null>(null);
+  const desiredRoomIdRef = useRef("");
+  const lastActionRef = useRef<"create" | "join" | null>(null);
   const lastLocalInputAtRef = useRef(0);
 
   const [connected, setConnected] = useState(false);
@@ -89,94 +125,148 @@ export function useOnlineGame() {
   }, [playerNumber]);
 
   useEffect(() => {
-    const socket = new WebSocket(getWsUrl());
-    socketRef.current = socket;
+    const clearReconnect = () => {
+      if (reconnectTimerRef.current !== null) {
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+    };
 
-    socket.addEventListener("open", () => {
-      setConnected(true);
-      setError("");
-    });
+    const connect = () => {
+      clearReconnect();
 
-    socket.addEventListener("close", () => {
-      setConnected(false);
-      setPlayerNumber(null);
-      playerNumberRef.current = null;
-      setLocalDisplayMallet(null);
-    });
+      const socket = new WebSocket(getWsUrl());
+      socketRef.current = socket;
 
-    socket.addEventListener("message", (event) => {
-      const message = JSON.parse(event.data) as ServerMessage;
-
-      if (message.type === "joined") {
-        setRoomId(message.roomId);
-        setJoinInput(message.roomId);
-        setPlayerNumber(message.playerNumber);
-        playerNumberRef.current = message.playerNumber;
+      socket.addEventListener("open", () => {
+        setConnected(true);
         setError("");
-        return;
-      }
 
-      if (message.type === "room_state") {
-        targetStateRef.current = message.state;
-        setRoomState(message.state);
+        const desiredRoomId = desiredRoomIdRef.current;
+        const action = lastActionRef.current;
+        if (desiredRoomId && action === "create") {
+          socket.send(JSON.stringify({ type: "create_room", roomId: desiredRoomId }));
+        } else if (desiredRoomId && action === "join") {
+          socket.send(JSON.stringify({ type: "join_room", roomId: desiredRoomId }));
+        }
+      });
 
-        const currentPlayerNumber = playerNumberRef.current;
-        if (!currentPlayerNumber) return;
+      socket.addEventListener("close", () => {
+        setConnected(false);
+        setPlayerNumber(null);
+        playerNumberRef.current = null;
 
-        const serverMe =
-          currentPlayerNumber === 1
-            ? rotate180(message.state.player1)
-            : message.state.player2;
+        clearReconnect();
+        reconnectTimerRef.current = window.setTimeout(connect, 1000);
+      });
 
-        setLocalDisplayMallet((current) => {
-          if (!current) return serverMe;
+      socket.addEventListener("message", (event) => {
+        const message = JSON.parse(event.data) as ServerMessage;
 
-          const sinceInput = performance.now() - lastLocalInputAtRef.current;
-          const gap = distance(current, serverMe);
+        if (message.type === "joined") {
+          setRoomId(message.roomId);
+          desiredRoomIdRef.current = message.roomId;
+          setJoinInput(message.roomId);
+          setPlayerNumber(message.playerNumber);
+          playerNumberRef.current = message.playerNumber;
+          setError("");
+          return;
+        }
 
-          if (sinceInput < 120) {
-            if (gap > 180) {
-              return lerpVec(current, serverMe, 0.22);
+        if (message.type === "room_state") {
+          const nextState = message.state;
+          const previousServer = latestServerStateRef.current;
+
+          latestServerStateRef.current = nextState;
+          setRoomState(nextState);
+
+          const now = performance.now();
+          if (shouldSnapImmediately(previousServer, nextState)) {
+            snapshotsRef.current = [{ receivedAt: now, state: nextState }];
+            renderStateRef.current = nextState;
+            setDisplayState(nextState);
+          } else {
+            snapshotsRef.current = [...snapshotsRef.current, { receivedAt: now, state: nextState }].slice(-MAX_BUFFER_SIZE);
+          }
+
+          const currentPlayerNumber = playerNumberRef.current;
+          if (!currentPlayerNumber) return;
+
+          const serverMe = currentPlayerNumber === 1 ? rotate180(nextState.player1) : nextState.player2;
+
+          setLocalDisplayMallet((current) => {
+            if (!current) return serverMe;
+
+            const sinceInput = performance.now() - lastLocalInputAtRef.current;
+            const gap = distance(current, serverMe);
+
+            if (sinceInput < 120) {
+              return gap > 180 ? lerpVec(current, serverMe, 0.2) : current;
             }
-            return current;
-          }
 
-          if (gap > 80) {
-            return lerpVec(current, serverMe, 0.3);
-          }
+            if (gap > 120) return lerpVec(current, serverMe, 0.35);
+            if (gap > 24) return lerpVec(current, serverMe, 0.22);
+            return gap > 4 ? lerpVec(current, serverMe, 0.14) : serverMe;
+          });
 
-          if (gap > 8) {
-            return lerpVec(current, serverMe, 0.18);
-          }
+          return;
+        }
 
-          return serverMe;
-        });
+        if (message.type === "error") {
+          setError(message.message);
+        }
+      });
+    };
 
-        return;
-      }
-
-      if (message.type === "error") {
-        setError(message.message);
-      }
-    });
+    connect();
 
     return () => {
-      socket.close();
+      clearReconnect();
+      socketRef.current?.close();
       socketRef.current = null;
     };
   }, []);
 
   useEffect(() => {
     const tick = () => {
-      const target = targetStateRef.current;
+      const buffer = snapshotsRef.current;
+      const current = renderStateRef.current;
+      const now = performance.now() - INTERPOLATION_DELAY_MS;
 
-      setDisplayState((current) => ({
-        ...target,
-        puck: lerpVec(current.puck, target.puck, 0.78),
-        player1: lerpVec(current.player1, target.player1, 0.42),
-        player2: lerpVec(current.player2, target.player2, 0.42),
-      }));
+      let nextRender = current;
 
+      if (buffer.length >= 2) {
+        while (buffer.length >= 2 && buffer[1].receivedAt <= now) {
+          buffer.shift();
+        }
+
+        if (buffer.length >= 2) {
+          const older = buffer[0];
+          const newer = buffer[1];
+          const span = Math.max(1, newer.receivedAt - older.receivedAt);
+          const t = Math.max(0, Math.min(1, (now - older.receivedAt) / span));
+          nextRender = interpolateRoomState(older.state, newer.state, t);
+        } else if (buffer[0]) {
+          const target = buffer[0].state;
+          nextRender = {
+            ...target,
+            puck: lerpVec(current.puck, target.puck, 0.18),
+            player1: lerpVec(current.player1, target.player1, 0.24),
+            player2: lerpVec(current.player2, target.player2, 0.24),
+          };
+        }
+      } else if (buffer.length === 1) {
+        const target = buffer[0].state;
+        nextRender = {
+          ...target,
+          puck: lerpVec(current.puck, target.puck, 0.18),
+          player1: lerpVec(current.player1, target.player1, 0.24),
+          player2: lerpVec(current.player2, target.player2, 0.24),
+        };
+      }
+
+      renderStateRef.current = nextRender;
+      setDisplayState(nextRender);
       animationRef.current = window.requestAnimationFrame(tick);
     };
 
@@ -204,6 +294,8 @@ export function useOnlineGame() {
       return;
     }
 
+    desiredRoomIdRef.current = normalized;
+    lastActionRef.current = "create";
     setJoinInput(normalized);
     setError("");
     send({ type: "create_room", roomId: normalized });
@@ -217,6 +309,8 @@ export function useOnlineGame() {
       return;
     }
 
+    desiredRoomIdRef.current = normalized;
+    lastActionRef.current = "join";
     setJoinInput(normalized);
     setError("");
     send({ type: "join_room", roomId: normalized });
