@@ -1,4 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  screenToWorld,
+  clampPlayerWorld,
+  clampCpuWorld,
+  WORLD_WIDTH,
+  WORLD_HEIGHT,
+  PUCK_RADIUS,
+  MALLET_RADIUS,
+  BOARD_PADDING,
+  GOAL_WIDTH,
+  WIN_SCORE,
+} from "../utils/projection";
 
 type Vec2 = { x: number; y: number };
 type Winner = "PLAYER" | "CPU" | null;
@@ -14,53 +26,46 @@ type DifficultyConfig = {
   interceptStrength: number;
 };
 
-const WORLD_WIDTH = 1000;
-const WORLD_HEIGHT = 1600;
-const VIEW_WIDTH = 700;
-const VIEW_HEIGHT = 1120;
-const BOARD_PADDING = 70;
-const GOAL_WIDTH = 320;
-const MALLET_RADIUS = 58;
-const PUCK_RADIUS = 22;
-const WIN_SCORE = 5;
-
-const INITIAL_PLAYER: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 230 };
-const INITIAL_CPU: Vec2 = { x: WORLD_WIDTH / 2, y: 230 };
-const INITIAL_PUCK: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
-
 const DIFFICULTY_CONFIG: Record<CpuDifficulty, DifficultyConfig> = {
   easy: {
-    reaction: 0.08,
-    maxSpeed: 7.5,
-    attackBias: 0.25,
+    reaction: 0.075,
+    maxSpeed: 7.2,
+    attackBias: 0.24,
     defendBias: 0.9,
-    error: 36,
-    puckTrackStrength: 0.7,
-    interceptStrength: 0.45,
+    error: 34,
+    puckTrackStrength: 0.72,
+    interceptStrength: 0.42,
   },
   normal: {
-    reaction: 0.12,
-    maxSpeed: 10,
-    attackBias: 0.45,
+    reaction: 0.11,
+    maxSpeed: 9.8,
+    attackBias: 0.42,
     defendBias: 1.0,
     error: 18,
     puckTrackStrength: 0.95,
     interceptStrength: 0.7,
   },
   hard: {
-    reaction: 0.18,
-    maxSpeed: 13.5,
-    attackBias: 0.7,
-    defendBias: 1.15,
+    reaction: 0.17,
+    maxSpeed: 13.2,
+    attackBias: 0.68,
+    defendBias: 1.14,
     error: 8,
-    puckTrackStrength: 1.15,
+    puckTrackStrength: 1.14,
     interceptStrength: 0.95,
   },
 };
 
+const INITIAL_PLAYER: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT - 230 };
+const INITIAL_CPU: Vec2 = { x: WORLD_WIDTH / 2, y: 230 };
+const INITIAL_PUCK: Vec2 = { x: WORLD_WIDTH / 2, y: WORLD_HEIGHT / 2 };
+
 const clamp = (value: number, min: number, max: number) =>
   Math.max(min, Math.min(value, max));
 
+const add = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x + b.x, y: a.y + b.y });
+const sub = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x - b.x, y: a.y - b.y });
+const mul = (v: Vec2, s: number): Vec2 => ({ x: v.x * s, y: v.y * s });
 const length = (v: Vec2) => Math.hypot(v.x, v.y);
 
 const normalize = (v: Vec2): Vec2 => {
@@ -68,38 +73,15 @@ const normalize = (v: Vec2): Vec2 => {
   return { x: v.x / len, y: v.y / len };
 };
 
-const add = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x + b.x, y: a.y + b.y });
-const sub = (a: Vec2, b: Vec2): Vec2 => ({ x: a.x - b.x, y: a.y - b.y });
-const mul = (v: Vec2, s: number): Vec2 => ({ x: v.x * s, y: v.y * s });
-
 function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-function toWorld(clientX: number, clientY: number, rect: DOMRect): Vec2 {
-  const x = ((clientX - rect.left) / rect.width) * WORLD_WIDTH;
-  const y = ((clientY - rect.top) / rect.height) * WORLD_HEIGHT;
-  return { x, y };
-}
-
-function clampToBottomHalf(pos: Vec2): Vec2 {
-  return {
-    x: clamp(pos.x, BOARD_PADDING + MALLET_RADIUS, WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS),
-    y: clamp(pos.y, WORLD_HEIGHT * 0.52, WORLD_HEIGHT - BOARD_PADDING - MALLET_RADIUS),
-  };
-}
-
-function clampToTopHalf(pos: Vec2): Vec2 {
-  return {
-    x: clamp(pos.x, BOARD_PADDING + MALLET_RADIUS, WORLD_WIDTH - BOARD_PADDING - MALLET_RADIUS),
-    y: clamp(pos.y, BOARD_PADDING + MALLET_RADIUS, WORLD_HEIGHT * 0.48),
-  };
-}
-
 function resetPuckDirection(towardPlayer: boolean) {
-  const x = (Math.random() - 0.5) * 6;
-  const y = towardPlayer ? 6.5 : -6.5;
-  return { x, y };
+  return {
+    x: (Math.random() - 0.5) * 6,
+    y: towardPlayer ? 6.4 : -6.4,
+  };
 }
 
 function resolveCollision(
@@ -116,11 +98,19 @@ function resolveCollision(
   }
 
   const normal = normalize(diff);
-  const nextPuck = add(mallet, mul(normal, minDist + 1));
-  const speed = Math.max(8, length(puckVelocity));
-  const nextVelocity = mul(normal, speed);
+  const pushedPuck = add(mallet, mul(normal, minDist + 1));
 
-  return { puck: nextPuck, velocity: nextVelocity };
+  const incomingAlongNormal =
+    puckVelocity.x * normal.x + puckVelocity.y * normal.y;
+  const reflect = sub(puckVelocity, mul(normal, 2 * incomingAlongNormal));
+
+  let nextVelocity = add(reflect, mul(normal, 1.8));
+  const speed = Math.max(8, length(nextVelocity));
+  const capped = Math.min(speed, 15);
+
+  nextVelocity = mul(normalize(nextVelocity), capped);
+
+  return { puck: pushedPuck, velocity: nextVelocity };
 }
 
 export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
@@ -130,6 +120,8 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
   const [playerScore, setPlayerScore] = useState(0);
   const [cpuScore, setCpuScore] = useState(0);
   const [winner, setWinner] = useState<Winner>(null);
+  const [started, setStarted] = useState(false);
+  const [status, setStatus] = useState("READY");
 
   const puckVelocityRef = useRef<Vec2>(resetPuckDirection(true));
   const animationRef = useRef<number | null>(null);
@@ -139,27 +131,60 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
     difficultyRef.current = DIFFICULTY_CONFIG[difficulty];
   }, [difficulty]);
 
-  const restart = useCallback(() => {
+  const resetPositionsOnly = useCallback((towardPlayer: boolean) => {
     setPlayer(INITIAL_PLAYER);
     setCpu(INITIAL_CPU);
     setPuck(INITIAL_PUCK);
+    puckVelocityRef.current = resetPuckDirection(towardPlayer);
+  }, []);
+
+  const startGame = useCallback(() => {
+    setStarted(true);
+    setWinner(null);
+    setStatus(`CPU: ${difficulty.toUpperCase()}`);
+    resetPositionsOnly(true);
+  }, [difficulty, resetPositionsOnly]);
+
+  const restart = useCallback(() => {
     setPlayerScore(0);
     setCpuScore(0);
     setWinner(null);
+    setStarted(true);
+    setStatus(`CPU: ${difficulty.toUpperCase()}`);
+    resetPositionsOnly(true);
+  }, [difficulty, resetPositionsOnly]);
+
+  const backToTitle = useCallback(() => {
+    setStarted(false);
+    setWinner(null);
+    setStatus("READY");
+    setPlayerScore(0);
+    setCpuScore(0);
+    setPlayer(INITIAL_PLAYER);
+    setCpu(INITIAL_CPU);
+    setPuck(INITIAL_PUCK);
     puckVelocityRef.current = resetPuckDirection(true);
   }, []);
 
-  const movePlayer = useCallback((clientX: number, clientY: number, rect: DOMRect) => {
-    const next = toWorld(clientX, clientY, rect);
-    setPlayer(clampToBottomHalf(next));
+  const updatePlayerFromWorld = useCallback((worldX: number, worldY: number) => {
+    setPlayer(clampPlayerWorld({ x: worldX, y: worldY }));
   }, []);
+
+  const movePlayer = useCallback((clientX: number, clientY: number, rect: DOMRect) => {
+    const { worldX, worldY } = screenToWorld(clientX, clientY, rect);
+    updatePlayerFromWorld(worldX, worldY);
+  }, [updatePlayerFromWorld]);
 
   useEffect(() => {
     const loop = () => {
-      setPuck((currentPuck) => {
-        if (winner) return currentPuck;
+      if (!started || winner) {
+        animationRef.current = requestAnimationFrame(loop);
+        return;
+      }
 
+      setPuck((currentPuck) => {
         const cfg = difficultyRef.current;
+
         let nextPuck = add(currentPuck, puckVelocityRef.current);
         let nextVelocity = { ...puckVelocityRef.current };
 
@@ -180,12 +205,15 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
           if (inGoalX) {
             setPlayerScore((score) => {
               const next = score + 1;
-              if (next >= WIN_SCORE) setWinner("PLAYER");
+              if (next >= WIN_SCORE) {
+                setWinner("PLAYER");
+                setStatus("あなたの勝ち！");
+              } else {
+                setStatus(`CPU: ${difficulty.toUpperCase()}`);
+              }
               return next;
             });
-            setPlayer(INITIAL_PLAYER);
-            setCpu(INITIAL_CPU);
-            puckVelocityRef.current = resetPuckDirection(false);
+            resetPositionsOnly(false);
             return INITIAL_PUCK;
           }
 
@@ -197,12 +225,15 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
           if (inGoalX) {
             setCpuScore((score) => {
               const next = score + 1;
-              if (next >= WIN_SCORE) setWinner("CPU");
+              if (next >= WIN_SCORE) {
+                setWinner("CPU");
+                setStatus("CPUの勝ち！");
+              } else {
+                setStatus(`CPU: ${difficulty.toUpperCase()}`);
+              }
               return next;
             });
-            setPlayer(INITIAL_PLAYER);
-            setCpu(INITIAL_CPU);
-            puckVelocityRef.current = resetPuckDirection(true);
+            resetPositionsOnly(true);
             return INITIAL_PUCK;
           }
 
@@ -247,11 +278,11 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
           const delta = sub(noisyTarget, currentCpu);
           const dist = length(delta);
 
-          if (dist < 1) return clampToTopHalf(currentCpu);
+          if (dist < 1) return clampCpuWorld(currentCpu);
 
           const step = Math.min(cfg.maxSpeed, dist * cfg.reaction);
-          const nextCpu = add(currentCpu, mul(normalize(delta), step));
-          return clampToTopHalf(nextCpu);
+          const moved = add(currentCpu, mul(normalize(delta), step));
+          return clampCpuWorld(moved);
         });
 
         setPlayer((currentPlayer) => {
@@ -270,8 +301,11 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
 
         nextVelocity.x *= 0.995;
         nextVelocity.y *= 0.995;
-        puckVelocityRef.current = nextVelocity;
 
+        if (Math.abs(nextVelocity.x) < 0.03) nextVelocity.x = 0;
+        if (Math.abs(nextVelocity.y) < 0.03) nextVelocity.y = 0;
+
+        puckVelocityRef.current = nextVelocity;
         return nextPuck;
       });
 
@@ -285,7 +319,7 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [winner]);
+  }, [started, winner, difficulty, resetPositionsOnly]);
 
   const statusText = useMemo(() => {
     if (winner === "PLAYER") return "あなたの勝ち！";
@@ -300,11 +334,15 @@ export function useAirHockeyGame(difficulty: CpuDifficulty = "normal") {
     playerScore,
     cpuScore,
     winner,
+    started,
+    status,
     statusText,
-    movePlayer,
-    restart,
+    winScore: WIN_SCORE,
     difficulty,
-    viewWidth: VIEW_WIDTH,
-    viewHeight: VIEW_HEIGHT,
+    startGame,
+    restart,
+    backToTitle,
+    updatePlayerFromWorld,
+    movePlayer,
   };
 }
