@@ -233,7 +233,6 @@ function App() {
 
           <div style={{ opacity: 0.86, lineHeight: 1.7, marginBottom: 14 }}>
             同じ4桁の数字を入力すると同じ部屋に入ります。
-            存在しなければ自動で作成されます。
           </div>
 
           <div
@@ -254,6 +253,13 @@ function App() {
               placeholder="4桁の数字"
               style={inputStyle}
             />
+
+            <button
+              onClick={onlineGame.createRoom}
+              style={modeButtonStyle("#7df9ff")}
+            >
+              作成
+            </button>
 
             <button
               onClick={onlineGame.joinRoom}
@@ -293,7 +299,7 @@ function App() {
           </div>
 
           <div style={{ lineHeight: 1.8, opacity: 0.9, fontSize: 14 }}>
-            例: 1234 を両方で入力すると同じ部屋に入れます。
+            作成で部屋を作ってから、相手が同じ番号で入室します。
           </div>
         </div>
       </div>
