@@ -193,6 +193,19 @@ export function useOnlineGame() {
     return true;
   };
 
+  const createRoom = () => {
+    const normalized = joinInput.replace(/\D/g, "").slice(0, 4);
+
+    if (normalized.length !== 4) {
+      setError("4桁の数字を入力してください。");
+      return;
+    }
+
+    setJoinInput(normalized);
+    setError("");
+    send({ type: "create_room", roomId: normalized });
+  };
+
   const joinRoom = () => {
     const normalized = joinInput.replace(/\D/g, "").slice(0, 4);
 
@@ -269,6 +282,7 @@ export function useOnlineGame() {
     playerNumber,
     roomState,
     error,
+    createRoom,
     joinRoom,
     restart,
     sendMove,
