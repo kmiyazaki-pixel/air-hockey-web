@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { CSSProperties, MouseEvent } from "react";
 import GameBoard from "./components/GameBoard";
 import ScorePanel from "./components/ScorePanel";
@@ -16,6 +16,38 @@ function App() {
 
   const cpuGame = useAirHockeyGame();
   const onlineGame = useOnlineGame();
+
+  const pendingOnlineMoveRef = useRef<{ x: number; y: number } | null>(null);
+  const onlineMoveRafRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (onlineMoveRafRef.current !== null) {
+        cancelAnimationFrame(onlineMoveRafRef.current);
+        onlineMoveRafRef.current = null;
+      }
+    };
+  }, []);
+
+  const flushOnlineMove = () => {
+    onlineMoveRafRef.current = null;
+
+    const move = pendingOnlineMoveRef.current;
+    pendingOnlineMoveRef.current = null;
+
+    if (!move) return;
+    if (!onlineGame.playerNumber) return;
+
+    onlineGame.sendMove(move.x, move.y);
+  };
+
+  const scheduleOnlineMove = (worldX: number, worldY: number) => {
+    pendingOnlineMoveRef.current = { x: worldX, y: worldY };
+
+    if (onlineMoveRafRef.current !== null) return;
+
+    onlineMoveRafRef.current = requestAnimationFrame(flushOnlineMove);
+  };
 
   const renderArenaBackground = () => {
     return (
@@ -80,7 +112,7 @@ function App() {
       rect
     );
 
-    onlineGame.sendMove(worldX, worldY);
+    scheduleOnlineMove(worldX, worldY);
   };
 
   const cpuPuckScreen = worldToScreen(cpuGame.puck.x, cpuGame.puck.y);
