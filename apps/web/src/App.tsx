@@ -6,6 +6,11 @@ import { TitleScreen } from "./components/TitleScreen";
 import { screenToWorld, worldToScreen } from "./utils/projection";
 import { useAirHockeyGame, type CpuDifficulty } from "./hooks/useAirHockeyGame";
 import { useOnlineGame } from "./hooks/useOnlineGame";
+import {
+  addCpuRankingEntry,
+  formatTimeMs,
+  loadCpuRanking,
+} from "./utils/cpuRanking";
 
 type Mode = "title" | "cpu" | "online";
 
@@ -18,6 +23,9 @@ function App() {
   const cpuGame = useAirHockeyGame(difficulty);
   const onlineGame = useOnlineGame();
 
+  const [rankingStore, setRankingStore] = useState(loadCpuRanking());
+  const [rankingSubmitted, setRankingSubmitted] = useState(false);
+
   const pendingOnlineMoveRef = useRef<{ x: number; y: number } | null>(null);
   const onlineMoveRafRef = useRef<number | null>(null);
 
@@ -29,6 +37,41 @@ function App() {
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (mode !== "cpu") return;
+    if (cpuGame.winner !== "PLAYER") return;
+    if (cpuGame.clearTimeMs == null) return;
+    if (rankingSubmitted) return;
+
+    const defaultName = "NO NAME";
+    const inputName = window.prompt(
+      `クリアタイム: ${formatTimeMs(
+        cpuGame.clearTimeMs
+      )}\nランキングに登録する名前を入力してください`,
+      defaultName
+    );
+
+    if (inputName === null) {
+      setRankingSubmitted(true);
+      return;
+    }
+
+    const nextStore = addCpuRankingEntry(
+      cpuGame.difficulty,
+      inputName,
+      cpuGame.clearTimeMs
+    );
+
+    setRankingStore(nextStore);
+    setRankingSubmitted(true);
+  }, [
+    mode,
+    cpuGame.winner,
+    cpuGame.clearTimeMs,
+    cpuGame.difficulty,
+    rankingSubmitted,
+  ]);
 
   const flushOnlineMove = () => {
     onlineMoveRafRef.current = null;
@@ -105,6 +148,7 @@ function App() {
       difficulty={difficulty}
       onDifficultyChange={setDifficulty}
       onStartCpu={() => {
+        setRankingSubmitted(false);
         cpuGame.restart();
         setMode("cpu");
       }}
@@ -113,33 +157,80 @@ function App() {
   );
 
   const renderCpu = () => (
-    <div style={boardShellStyle}>
-      <ScorePanel
-        label="プレイヤー"
-        score={cpuGame.playerScore}
-        color="#7df9ff"
-        winScore={WIN_SCORE}
-      />
+    <>
+      <div style={boardShellStyle}>
+        <ScorePanel
+          label="プレイヤー"
+          score={cpuGame.playerScore}
+          color="#7df9ff"
+          winScore={WIN_SCORE}
+        />
 
-      <GameBoard
-        winner={cpuGame.winner}
-        status={cpuGame.statusText}
-        winScore={WIN_SCORE}
-        onMouseMove={handleCpuMove}
-        onBack={backToTitle}
-        onRestart={cpuGame.restart}
-        cpuScreen={cpuOpponentScreen}
-        playerScreen={cpuPlayerScreen}
-        puckScreen={cpuPuckScreen}
-      />
+        <GameBoard
+          winner={cpuGame.winner}
+          status={cpuGame.statusText}
+          winScore={WIN_SCORE}
+          onMouseMove={handleCpuMove}
+          onBack={backToTitle}
+          onRestart={() => {
+            setRankingSubmitted(false);
+            cpuGame.restart();
+          }}
+          cpuScreen={cpuOpponentScreen}
+          playerScreen={cpuPlayerScreen}
+          puckScreen={cpuPuckScreen}
+        />
 
-      <ScorePanel
-        label="CPU"
-        score={cpuGame.cpuScore}
-        color="#ff5fd2"
-        winScore={WIN_SCORE}
-      />
-    </div>
+        <ScorePanel
+          label="CPU"
+          score={cpuGame.cpuScore}
+          color="#ff5fd2"
+          winScore={WIN_SCORE}
+        />
+      </div>
+
+      <div
+        style={{
+          maxWidth: 1160,
+          margin: "16px auto 0",
+          padding: 18,
+          borderRadius: 20,
+          background: "rgba(255,255,255,0.04)",
+          border: "1px solid rgba(255,255,255,0.12)",
+        }}
+      >
+        <div style={{ fontWeight: "bold", marginBottom: 12 }}>
+          {cpuGame.difficulty.toUpperCase()} 最短クリアランキング
+        </div>
+
+        <div style={{ display: "grid", gap: 8 }}>
+          {rankingStore[cpuGame.difficulty].length === 0 ? (
+            <div style={{ opacity: 0.7 }}>まだ記録がありません</div>
+          ) : (
+            rankingStore[cpuGame.difficulty].map((entry, index) => (
+              <div
+                key={`${entry.name}-${entry.createdAt}`}
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "56px 1fr 120px",
+                  gap: 12,
+                  alignItems: "center",
+                  padding: "10px 12px",
+                  borderRadius: 12,
+                  background: "rgba(255,255,255,0.05)",
+                }}
+              >
+                <div>#{index + 1}</div>
+                <div>{entry.name}</div>
+                <div style={{ textAlign: "right" }}>
+                  {formatTimeMs(entry.timeMs)}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+    </>
   );
 
   const renderOnline = () => (
