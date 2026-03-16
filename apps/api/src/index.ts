@@ -6,9 +6,6 @@ import pg from "pg";
 const { Pool } = pg;
 
 const PORT = Number(process.env.PORT ?? 4000);
-
-const DATABASE_URL = process.env.DATABASE_URL;
-const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
 const STEP_RATE = 1000 / 60;
 const BROADCAST_RATE = 1000 / 30;
 
@@ -94,24 +91,7 @@ const DATABASE_URL = process.env.DATABASE_URL;
 const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
 
 const app = Fastify({ logger: true });
-import Fastify from "fastify";
-import cors from "@fastify/cors";
-import { WebSocketServer, WebSocket } from "ws";
-import pg from "pg";
 
-const { Pool } = pg;
-
-const PORT = Number(process.env.PORT ?? 4000);
-
-const DATABASE_URL = process.env.DATABASE_URL;
-const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : null;
-
-const app = Fastify({ logger: true });
-
-await app.register(cors, {
-  origin: true,
-  methods: ["GET", "POST", "OPTIONS"],
-});
 const rooms = new Map<string, RoomState>();
 const socketToRoom = new WeakMap<
   WebSocket,
@@ -572,7 +552,6 @@ function stepRoom(room: RoomState) {
   if (Math.abs(room.puckVelocity.y) < 0.04) room.puckVelocity.y = 0;
 
   room.status = hitThisFrame ? room.status : "プレイ中";
-
   endPhysicsFrame(room);
 }
 
@@ -598,113 +577,114 @@ async function ensureRankingTable() {
   `);
 }
 
-app.get("/health", async () => {
-  return { ok: true, rooms: rooms.size, db: Boolean(pool) };
-});
-
-app.get("/", async () => {
-  return { ok: true, message: "Air Hockey API" };
-});
-
-app.get("/rankings/cpu", async (request, reply) => {
-  if (!pool) {
-    return reply.code(503).send({ error: "database_unavailable" });
-  }
-
-  const difficulty = String((request.query as { difficulty?: string }).difficulty ?? "");
-
-  if (!isValidDifficulty(difficulty)) {
-    return reply.code(400).send({ error: "invalid_difficulty" });
-  }
-
-  const result = await pool.query<CpuRankingRow>(
-    `
-      SELECT id, name, difficulty, time_ms, created_at
-      FROM cpu_rankings
-      WHERE difficulty = $1
-      ORDER BY time_ms ASC, created_at ASC
-      LIMIT 10
-    `,
-    [difficulty]
-  );
-
-  return {
-    difficulty,
-    items: result.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      difficulty: row.difficulty,
-      timeMs: row.time_ms,
-      createdAt: row.created_at,
-    })),
-  };
-});
-
-app.post("/rankings/cpu", async (request, reply) => {
-  if (!pool) {
-    return reply.code(503).send({ error: "database_unavailable" });
-  }
-
-  const body = request.body as {
-    name?: unknown;
-    difficulty?: unknown;
-    timeMs?: unknown;
-  };
-
-  const name = typeof body.name === "string" ? body.name.trim().slice(0, 20) : "";
-  const difficulty =
-    typeof body.difficulty === "string" ? body.difficulty : "";
-  const timeMs = typeof body.timeMs === "number" ? Math.floor(body.timeMs) : NaN;
-
-  if (!name) {
-    return reply.code(400).send({ error: "invalid_name" });
-  }
-
-  if (!isValidDifficulty(difficulty)) {
-    return reply.code(400).send({ error: "invalid_difficulty" });
-  }
-
-  if (!Number.isFinite(timeMs) || timeMs <= 0) {
-    return reply.code(400).send({ error: "invalid_time" });
-  }
-
-  await pool.query(
-    `
-      INSERT INTO cpu_rankings (name, difficulty, time_ms)
-      VALUES ($1, $2, $3)
-    `,
-    [name, difficulty, timeMs]
-  );
-
-  const result = await pool.query<CpuRankingRow>(
-    `
-      SELECT id, name, difficulty, time_ms, created_at
-      FROM cpu_rankings
-      WHERE difficulty = $1
-      ORDER BY time_ms ASC, created_at ASC
-      LIMIT 10
-    `,
-    [difficulty]
-  );
-
-  return reply.code(201).send({
-    ok: true,
-    difficulty,
-    items: result.rows.map((row) => ({
-      id: row.id,
-      name: row.name,
-      difficulty: row.difficulty,
-      timeMs: row.time_ms,
-      createdAt: row.created_at,
-    })),
+async function main() {
+  await app.register(cors, {
+    origin: true,
+    methods: ["GET", "POST", "OPTIONS"],
   });
-});
 
-app.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
-  if (err) {
-    app.log.error(err);
-    process.exit(1);
-  }
+  app.get("/health", async () => {
+    return { ok: true, rooms: rooms.size, db: Boolean(pool) };
+  });
+
+  app.get("/", async () => {
+    return { ok: true, message: "Air Hockey API" };
+  });
+
+  app.get("/rankings/cpu", async (request, reply) => {
+    if (!pool) {
+      return reply.code(503).send({ error: "database_unavailable" });
+    }
+
+    const difficulty = String((request.query as { difficulty?: string }).difficulty ?? "");
+
+    if (!isValidDifficulty(difficulty)) {
+      return reply.code(400).send({ error: "invalid_difficulty" });
+    }
+
+    const result = await pool.query<CpuRankingRow>(
+      `
+        SELECT id, name, difficulty, time_ms, created_at
+        FROM cpu_rankings
+        WHERE difficulty = $1
+        ORDER BY time_ms ASC, created_at ASC
+        LIMIT 10
+      `,
+      [difficulty]
+    );
+
+    return {
+      difficulty,
+      items: result.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        difficulty: row.difficulty,
+        timeMs: row.time_ms,
+        createdAt: row.created_at,
+      })),
+    };
+  });
+
+  app.post("/rankings/cpu", async (request, reply) => {
+    if (!pool) {
+      return reply.code(503).send({ error: "database_unavailable" });
+    }
+
+    const body = request.body as {
+      name?: unknown;
+      difficulty?: unknown;
+      timeMs?: unknown;
+    };
+
+    const name = typeof body.name === "string" ? body.name.trim().slice(0, 20) : "";
+    const difficulty = typeof body.difficulty === "string" ? body.difficulty : "";
+    const timeMs = typeof body.timeMs === "number" ? Math.floor(body.timeMs) : NaN;
+
+    if (!name) {
+      return reply.code(400).send({ error: "invalid_name" });
+    }
+
+    if (!isValidDifficulty(difficulty)) {
+      return reply.code(400).send({ error: "invalid_difficulty" });
+    }
+
+    if (!Number.isFinite(timeMs) || timeMs <= 0) {
+      return reply.code(400).send({ error: "invalid_time" });
+    }
+
+    await pool.query(
+      `
+        INSERT INTO cpu_rankings (name, difficulty, time_ms)
+        VALUES ($1, $2, $3)
+      `,
+      [name, difficulty, timeMs]
+    );
+
+    const result = await pool.query<CpuRankingRow>(
+      `
+        SELECT id, name, difficulty, time_ms, created_at
+        FROM cpu_rankings
+        WHERE difficulty = $1
+        ORDER BY time_ms ASC, created_at ASC
+        LIMIT 10
+      `,
+      [difficulty]
+    );
+
+    return reply.code(201).send({
+      ok: true,
+      difficulty,
+      items: result.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        difficulty: row.difficulty,
+        timeMs: row.time_ms,
+        createdAt: row.created_at,
+      })),
+    });
+  });
+
+  await app.listen({ port: PORT, host: "0.0.0.0" });
 
   try {
     await ensureRankingTable();
@@ -774,4 +754,9 @@ app.listen({ port: PORT, host: "0.0.0.0" }, async (err) => {
   }, BROADCAST_RATE);
 
   app.log.info(`API running on ${PORT}`);
+}
+
+main().catch((error) => {
+  app.log.error(error);
+  process.exit(1);
 });
